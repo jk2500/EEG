@@ -1,0 +1,3 @@
+condition,method,n_bins,mean_complexity,std_complexity,n_epochs,n_channels
+awake_eyes_open,Binning,10,1.6403259687148075,0.8257304211442827,60,8
+sedation,Binning,10,5.141286469799607,0.33647559596874915,12,8
