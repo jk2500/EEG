@@ -1,13 +1,13 @@
 condition,frequency_band,mean_complexity,std_complexity,n_epochs,warning
-awake_eyes_open,delta,13.756705070636109,1.1852739834367307,60,Gaussian assumption invalid - results unreliable
-awake_eyes_open,theta,13.04172140554416,1.0368752014943643,60,Gaussian assumption invalid - results unreliable
-awake_eyes_open,alpha,11.131879593396114,0.7803594675453757,60,Gaussian assumption invalid - results unreliable
-awake_eyes_open,beta,7.530375119251791,0.389844763478689,60,Gaussian assumption invalid - results unreliable
-awake_eyes_open,gamma,6.441425539138185,0.30812488945568167,60,Gaussian assumption invalid - results unreliable
-awake_eyes_open,broadband,9.897326244095137,0.8749683521880277,60,Gaussian assumption invalid - results unreliable
-sedation,delta,15.63093548998358,1.0615997195423086,12,Gaussian assumption invalid - results unreliable
-sedation,theta,10.94904997675009,0.3485437190256746,12,Gaussian assumption invalid - results unreliable
-sedation,alpha,12.760179627809203,0.47723001798382514,12,Gaussian assumption invalid - results unreliable
-sedation,beta,10.571719383328269,0.4530858656090706,12,Gaussian assumption invalid - results unreliable
-sedation,gamma,5.643724269202102,0.1676562572319595,12,Gaussian assumption invalid - results unreliable
-sedation,broadband,11.95112448110841,0.6978826641823752,12,Gaussian assumption invalid - results unreliable
+awake_eyes_closed,delta,13.677854688573907,1.0399827821451646,60,Gaussian assumption invalid - results unreliable
+awake_eyes_closed,theta,11.241249184594494,0.6439377256963912,60,Gaussian assumption invalid - results unreliable
+awake_eyes_closed,alpha,11.192528352104226,0.7304103764170959,60,Gaussian assumption invalid - results unreliable
+awake_eyes_closed,beta,8.658131215958633,0.31455934119303663,60,Gaussian assumption invalid - results unreliable
+awake_eyes_closed,gamma,7.581789645577269,0.34687984093032526,60,Gaussian assumption invalid - results unreliable
+awake_eyes_closed,broadband,9.848793773259263,0.6671171736457469,60,Gaussian assumption invalid - results unreliable
+awake_eyes_open,delta,13.758400886964877,1.2013245695923171,60,Gaussian assumption invalid - results unreliable
+awake_eyes_open,theta,13.029281612979386,1.0340524765695331,60,Gaussian assumption invalid - results unreliable
+awake_eyes_open,alpha,11.12858328846909,0.76393199500079,60,Gaussian assumption invalid - results unreliable
+awake_eyes_open,beta,7.534821850593039,0.3930179349289186,60,Gaussian assumption invalid - results unreliable
+awake_eyes_open,gamma,6.443281358092684,0.3018784802269136,60,Gaussian assumption invalid - results unreliable
+awake_eyes_open,broadband,9.88297546027835,0.8887370393789538,60,Gaussian assumption invalid - results unreliable
