@@ -1,0 +1,27 @@
+# Core scientific stack
+numpy
+scipy
+pandas
+matplotlib
+seaborn
+scikit-learn
+
+# EEG / signal processing
+mne
+mne-bids
+pyedflib
+pywavelets
+
+# CLI and utilities
+tqdm
+joblib
+psutil
+
+# Visualization / reporting
+plotly
+kaleido
+
+# Notebook tooling
+jupyter
+notebook
+ipykernel

@@ -3,14 +3,14 @@
 Unified EEG Analysis Runner - Interactive & Batch CLI
 =====================================================
 
-A centralized, powerful script for running batch analyses of Neural Complexity (CN)
-and Minimum Information Bipartition (MIB) on the entire ds005620 dataset. This
+A centralized, powerful script for running batch analyses of the Minimum Information
+Bipartition (MIB) on the entire ds005620 dataset. This
 script provides both an interactive guided setup and direct command-line execution.
 
 Key Features:
 - Interactive CLI mode for guided analysis setup
-- Unified interface for all analysis methods (KSG, Binning, Gaussian).
-- Can calculate different metrics (Neural Complexity, MIB).
+- Unified interface for all analysis estimators (KSG, Binning, Gaussian).
+- Focused exclusively on the MIB metric for clarity.
 - Robust processing with periodic checkpointing and resume capability.
 - Sample run mode for quick testing and validation.
 - Optimized parallel processing and memory management.
@@ -26,18 +26,40 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 
+BASE_DIR = Path(__file__).resolve().parent
+SRC_DIR = BASE_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
 # Local imports
-from eeg_utils import create_subject_file_map, preprocess_eeg_by_bands, _extract_condition, EEGDataCache, log_print
-from config import ANALYSIS_PARAMS, KSG_PARAMS, BINNING_PARAMS, GAUSSIAN_PARAMS, DATASET_DIR, DEFAULT_OUTPUT_DIR
-from analyzers.complexity_analyzer import ComplexityAnalyzer
-from analyzers.estimators import KSGEstimator, BinningEstimator, GaussianEstimator
+from eeg_analysis.eeg_utils import (
+    create_subject_file_map,
+    preprocess_eeg_by_bands,
+    _extract_condition,
+    EEGDataCache,
+    log_print
+)
+from eeg_analysis.config import (
+    ANALYSIS_PARAMS,
+    KSG_PARAMS,
+    BINNING_PARAMS,
+    GAUSSIAN_PARAMS,
+    DATASET_DIR,
+    DEFAULT_OUTPUT_DIR
+)
+from eeg_analysis.analyzers.complexity_analyzer import ComplexityAnalyzer
+from eeg_analysis.analyzers.estimators import (
+    KSGEstimator,
+    BinningEstimator,
+    GaussianEstimator
+)
 
 # --- Interactive UI Functions ---
 
 def print_banner():
     """Displays a welcome banner for the interactive mode."""
     print("="*80)
-    print("UNIFIED EEG BATCH ANALYSIS - NEURAL COMPLEXITY & MIB")
+    print("UNIFIED EEG BATCH ANALYSIS - MIB")
     print("="*80)
     print("\nWelcome! This tool will guide you through batch analysis setup.")
     print("You can process entire datasets with sophisticated checkpointing and resume capabilities.")
@@ -136,12 +158,6 @@ def interactive_main():
     """Guides the user through an interactive batch analysis session."""
     print_banner()
     
-    # Get metric choice
-    metric = get_user_choice(
-        "SELECT ANALYSIS METRIC:", 
-        ['Complexity (Neural Complexity/Mean Integration)', 'MIB (Minimum Information Bipartition)', 'Complexes (IIT Complexes/Local Maxima)']
-    )
-    
     # Get estimator choice
     estimator_name = get_user_choice(
         "SELECT MUTUAL INFORMATION ESTIMATOR:", 
@@ -181,7 +197,7 @@ def interactive_main():
     print("\n" + "="*60)
     print("BATCH ANALYSIS CONFIGURATION SUMMARY")
     print("="*60)
-    print(f"Metric: {metric.upper()}")
+    print("Metric: MIB (Minimum Information Bipartition)")
     print(f"Estimator: {estimator_name.upper()}")
     print(f"Dataset Directory: {dataset_dir}")
     print(f"Output Directory: {output_dir or 'Auto-generated'}")
@@ -199,7 +215,6 @@ def interactive_main():
     
     try:
         run_batch_analysis(
-            metric=metric,
             estimator_name=estimator_name,
             dataset_dir=dataset_dir,
             output_dir=output_dir,
@@ -254,36 +269,12 @@ def save_subject_results(subject_id, subject_results, output_dir, method_name, v
     for condition, condition_data in subject_results.items():
         serializable_results[condition] = {}
         for band, band_data in condition_data.items():
-            
-            # Handle complexes metric differently
-            if 'complexes_per_epoch' in band_data:
-                # For complexes: save the complex data structure
-                serializable_complexes = []
-                for epoch_complexes in band_data.get('complexes_per_epoch', []):
-                    epoch_data = []
-                    for subset, phi_value in epoch_complexes:
-                        epoch_data.append({
-                            'subset': list(subset),  # Convert tuple to list for JSON
-                            'phi_value': float(phi_value)
-                        })
-                    serializable_complexes.append(epoch_data)
-                
-                serializable_results[condition][band] = {
-                    'complexes_per_epoch': serializable_complexes,
-                    'mean_phi': float(band_data.get('mean_phi', 0)),
-                    'std_phi': float(band_data.get('std_phi', 0)),
-                    'total_complexes': int(band_data.get('total_complexes', 0)),
-                    'n_epochs': int(band_data.get('n_epochs', 0)),
-                    'selected_channels': band_data.get('selected_channels', [])
-                }
-            else:
-                # For traditional metrics: save as before
-                serializable_results[condition][band] = {
-                    'metric_values': [float(x) for x in band_data.get('metric_values', [])],
-                    'mean_metric': float(band_data.get('mean_metric', 0)),
-                    'std_metric': float(band_data.get('std_metric', 0)),
-                    'n_epochs': int(band_data.get('n_epochs', 0))
-                }
+            serializable_results[condition][band] = {
+                'metric_values': [float(x) for x in band_data.get('metric_values', [])],
+                'mean_metric': float(band_data.get('mean_metric', 0)),
+                'std_metric': float(band_data.get('std_metric', 0)),
+                'n_epochs': int(band_data.get('n_epochs', 0))
+            }
             
     with open(json_path, 'w') as f:
         json.dump(serializable_results, f, indent=2)
@@ -305,35 +296,21 @@ def process_single_subject(subject_id, condition_paths, analyzer, output_dir, ve
             
             condition_results = {}
             for band_name, epochs_data in band_data.items():
-                metric_values = [analyzer._calculate_metric_for_epoch(epoch) for epoch in epochs_data]
+                metric_values = analyzer._evaluate_epochs(
+                    epochs_data,
+                    progress_label=f"{subject_id} | {condition_name} | {band_name}",
+                    verbose_override=verbose
+                )
                 metric_values = [v for v in metric_values if v is not None]
                 
                 if metric_values:
-                    if analyzer.metric == 'complexes':
-                        # For complexes: handle the special data structure
-                        all_phi_values = []
-                        for epoch_complexes in metric_values:
-                            for subset, phi_value in epoch_complexes:
-                                all_phi_values.append(phi_value)
-                        
-                        condition_results[band_name] = {
-                            'complexes_per_epoch': metric_values,
-                            'mean_phi': np.mean(all_phi_values) if all_phi_values else 0,
-                            'std_phi': np.std(all_phi_values) if all_phi_values else 0,
-                            'total_complexes': len(all_phi_values),
-                            'n_epochs': len(metric_values),
-                            'selected_channels': analyzer.params.get('channels_list', [])
-                        }
-                        log_print(f"  {condition_name} {band_name}: {len(all_phi_values)} complexes, mean Φ = {np.mean(all_phi_values):.4f}", verbose)
-                    else:
-                        # For traditional metrics: handle as before
-                        condition_results[band_name] = {
-                            'metric_values': metric_values,
-                            'mean_metric': np.mean(metric_values),
-                            'std_metric': np.std(metric_values),
-                            'n_epochs': len(metric_values)
-                        }
-                        log_print(f"  {condition_name} {band_name}: {np.mean(metric_values):.4f}", verbose)
+                    condition_results[band_name] = {
+                        'metric_values': metric_values,
+                        'mean_metric': np.mean(metric_values),
+                        'std_metric': np.std(metric_values),
+                        'n_epochs': len(metric_values)
+                    }
+                    log_print(f"  {condition_name} {band_name}: {np.mean(metric_values):.4f}", verbose)
             
             if condition_results:
                 subject_results[condition_name] = condition_results
@@ -351,8 +328,10 @@ def process_single_subject(subject_id, condition_paths, analyzer, output_dir, ve
 
 # --- Main Batch Analysis Function ---
 
-def run_batch_analysis(metric, estimator_name, dataset_dir, output_dir, n_channels, sample_run, sample_subjects, verbose, resume):
+def run_batch_analysis(estimator_name, dataset_dir, output_dir, n_channels, sample_run, sample_subjects, verbose, resume):
     """Main function to orchestrate the batch analysis."""
+    
+    metric_name = 'mib'
     
     estimator_map = {
         'ksg': (KSGEstimator, KSG_PARAMS),
@@ -367,7 +346,7 @@ def run_batch_analysis(metric, estimator_name, dataset_dir, output_dir, n_channe
     final_params = {**ANALYSIS_PARAMS, **method_params, 'n_channels': n_channels}
     
     estimator = EstimatorClass(**final_params)
-    analyzer = ComplexityAnalyzer(estimator, metric=metric, **final_params)
+    analyzer = ComplexityAnalyzer(estimator, **final_params)
     
     run_type = "SAMPLE" if sample_run else "FULL"
     output_dir = output_dir or os.path.join(DEFAULT_OUTPUT_DIR, f'batch_{analyzer.method_name.lower()}_{run_type.lower()}')
@@ -408,7 +387,7 @@ def run_batch_analysis(metric, estimator_name, dataset_dir, output_dir, n_channe
             all_results[subject_id] = subject_results
             
         if (i + 1) % 5 == 0 or (i + 1) == len(subjects_to_process):
-            metadata = {'metric': metric, 'estimator': estimator_name}
+            metadata = {'metric': metric_name, 'estimator': estimator_name}
             save_progress_checkpoint(all_results, metadata, checkpoint_path, verbose)
             
     total_time = time.time() - start_time
@@ -442,20 +421,18 @@ Examples:
 
   # Command-line mode examples:
   # Run a sample MIB analysis using the recommended KSG estimator
-  python run_analysis.py --metric mib --estimator ksg --sample
+  python run_analysis.py --estimator ksg --sample
 
-  # Run a full Neural Complexity analysis with the Binning estimator
-  python run_analysis.py --metric complexity --estimator binning --resume
+  # Run a full analysis with the Binning estimator
+  python run_analysis.py --estimator binning --resume
 
   # Custom dataset and output directories
-  python run_analysis.py --metric complexity --estimator ksg --dataset /path/to/data --output /path/to/results
+  python run_analysis.py --estimator ksg --dataset /path/to/data --output /path/to/results
 """
     )
     
     parser.add_argument('--interactive', action='store_true',
                         help='Force interactive mode (default when no other args provided).')
-    parser.add_argument('--metric', default='complexity', choices=['complexity', 'mib', 'complexes'],
-                        help='The metric to calculate (default: complexity).')
     parser.add_argument('--estimator', required=True, choices=['ksg', 'binning', 'gaussian'],
                         help='The MI estimator to use.')
     parser.add_argument('--dataset', default=DATASET_DIR,
@@ -477,7 +454,6 @@ Examples:
     
     try:
         run_batch_analysis(
-            metric=args.metric,
             estimator_name=args.estimator,
             dataset_dir=args.dataset,
             output_dir=args.output,

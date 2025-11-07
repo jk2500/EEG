@@ -11,18 +11,34 @@ argument-based execution for scripting.
 import argparse
 import os
 import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 # Local imports
-from config import ANALYSIS_PARAMS, KSG_PARAMS, BINNING_PARAMS, DEFAULT_FILE_PATHS, DEFAULT_OUTPUT_DIR
-from analyzers.complexity_analyzer import ComplexityAnalyzer
-from analyzers.estimators import KSGEstimator, BinningEstimator, GaussianEstimator
+from eeg_analysis.config import (
+    ANALYSIS_PARAMS,
+    KSG_PARAMS,
+    BINNING_PARAMS,
+    DEFAULT_FILE_PATHS,
+    DEFAULT_OUTPUT_DIR
+)
+from eeg_analysis.analyzers.complexity_analyzer import ComplexityAnalyzer
+from eeg_analysis.analyzers.estimators import (
+    KSGEstimator,
+    BinningEstimator,
+    GaussianEstimator
+)
 
 # --- UI and Helper Functions ---
 
 def print_banner():
     """Displays a welcome banner for the interactive mode."""
     print("="*80)
-    print("NEURAL COMPLEXITY & MIB ANALYSIS FOR EEG CONSCIOUSNESS RESEARCH")
+    print("MIB ANALYSIS FOR EEG CONSCIOUSNESS RESEARCH")
     print("="*80)
     print("\nWelcome! This tool will guide you through the analysis setup.")
 
@@ -55,7 +71,7 @@ def get_params_from_user():
 
 # --- Main Logic ---
 
-def run_analysis(metric, estimator_name, analysis_type, file_paths, output_dir, params):
+def run_analysis(estimator_name, analysis_type, file_paths, output_dir, params):
     """
     Initializes and runs the selected analysis.
     """
@@ -71,7 +87,7 @@ def run_analysis(metric, estimator_name, analysis_type, file_paths, output_dir, 
         sys.exit(1)
         
     estimator = EstimatorClass(**params)
-    analyzer = ComplexityAnalyzer(estimator=estimator, metric=metric, verbose=True, **params)
+    analyzer = ComplexityAnalyzer(estimator=estimator, verbose=True, **params)
     
     print(f"\n--- Running {analyzer.method_name} Analysis ---")
     analyzer.run_analysis(
@@ -85,7 +101,6 @@ def interactive_main():
     """Guides the user through an interactive session."""
     print_banner()
     
-    metric = get_user_choice("SELECT METRIC:", ['Complexity (Mean Integration)', 'MIB (Min Integration)', 'Complexes (IIT Complexes)'])
     estimator_name = get_user_choice("SELECT ESTIMATOR:", ['KSG (Recommended)', 'Binning', 'Gaussian (Invalid)'])
     analysis_type = get_user_choice("SELECT ANALYSIS TYPE:", ['Broadband', 'Spectral', 'Both (Recommended)'])
     
@@ -96,7 +111,7 @@ def interactive_main():
     output_dir = input(f"\nOutput directory (default: {DEFAULT_OUTPUT_DIR}): ").strip() or DEFAULT_OUTPUT_DIR
     
     print("\n--- Analysis Summary ---")
-    print(f"Metric: {metric.upper()}")
+    print("Metric: MIB (Minimum Information Bipartition)")
     print(f"Estimator: {estimator_name.upper()}")
     print(f"Type: {analysis_type}")
     print(f"Parameters: {params}")
@@ -107,7 +122,7 @@ def interactive_main():
         return
         
     os.makedirs(os.path.join(output_dir, 'plots'), exist_ok=True)
-    run_analysis(metric, estimator_name, analysis_type, file_paths, output_dir, params)
+    run_analysis(estimator_name, analysis_type, file_paths, output_dir, params)
 
 def argument_main():
     """Handles command-line arguments for non-interactive execution."""
@@ -115,8 +130,6 @@ def argument_main():
         description='Run Neural Complexity and MIB analyses.',
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument('--metric', default='complexity', choices=['complexity', 'mib'],
-                        help='The metric to calculate (default: complexity).')
     parser.add_argument('--estimator', required=True, choices=['ksg', 'binning', 'gaussian'],
                         help='The MI estimator to use.')
     parser.add_argument('--type', default='both', choices=['broadband', 'spectral', 'both'],
@@ -146,7 +159,7 @@ def argument_main():
     }
     
     os.makedirs(os.path.join(args.output, 'plots'), exist_ok=True)
-    run_analysis(args.metric, args.estimator, args.type, file_paths, args.output, params)
+    run_analysis(args.estimator, args.type, file_paths, args.output, params)
 
 def main():
     """Main entry point."""

@@ -147,7 +147,7 @@ class ResultsProcessor:
         if 'mib' in path_str:
             metric = 'MIB'
         elif 'complexity' in path_str:
-            metric = 'COMPLEXITY'
+            metric = 'MIB'
         else:
             metric = 'UNKNOWN'
         
@@ -173,7 +173,7 @@ class ResultsProcessor:
         elif 'gaussian' in filename.lower():
             estimator = 'GAUSSIAN'
         
-        return {'subject': 'aggregate', 'metric': 'COMPLEXITY', 'estimator': estimator}
+        return {'subject': 'aggregate', 'metric': 'MIB', 'estimator': estimator}
     
     def load_and_validate_results(self, base_dirs: List[str]) -> pd.DataFrame:
         """Load results with comprehensive validation and quality assessment."""
@@ -238,54 +238,6 @@ class ResultsProcessor:
                                 'value': float(value)
                             })
 
-                # Support complexes: list per-epoch of (subset, phi_value)
-                complexes_epochs = band_data.get('complexes_per_epoch', [])
-                selected_channels = band_data.get('selected_channels', [])
-                if isinstance(complexes_epochs, list) and complexes_epochs:
-                    for epoch_idx, epoch_complexes in enumerate(complexes_epochs):
-                        if isinstance(epoch_complexes, list) and epoch_complexes:
-                            # Find the complex with maximum Φ in this epoch (the main complex)
-                            max_phi_complex = None
-                            max_phi_val = -np.inf
-                            
-                            for complex_entry in epoch_complexes:
-                                try:
-                                    phi_val = float(complex_entry.get('phi_value', np.nan))
-                                    if not np.isnan(phi_val) and phi_val > max_phi_val:
-                                        max_phi_val = phi_val
-                                        max_phi_complex = complex_entry
-                                except Exception:
-                                    continue
-                            
-                            # Only record the main complex (highest Φ) from this epoch
-                            if max_phi_complex is not None:
-                                try:
-                                    phi_val = float(max_phi_complex.get('phi_value', np.nan))
-                                    subset_indices = max_phi_complex.get('subset', [])
-                                    # Map indices to channel names if available
-                                    if selected_channels and all(isinstance(i, int) and 0 <= i < len(selected_channels) for i in subset_indices):
-                                        subset_channels = [selected_channels[i] for i in subset_indices]
-                                    else:
-                                        subset_channels = [f"Ch{i}" for i in subset_indices]
-                                except Exception:
-                                    continue
-                                
-                                if not np.isnan(phi_val):
-                                    records.append({
-                                        'subject': file_info['subject'],
-                                        'metric': 'COMPLEXES',
-                                        'estimator': file_info['estimator'],
-                                        'condition': condition,
-                                        'band': band,
-                                        'value': phi_val,  # This is now the MAX Φ per epoch
-                                        'subset_indices': subset_indices,
-                                        'subset_channels': subset_channels,
-                                        'subset': ','.join(subset_channels),
-                                        'subset_size': len(subset_indices),
-                                        'epoch_idx': epoch_idx,
-                                        'is_main_complex': True  # Flag to indicate this is the dominant complex
-                                    })
-        
         return records
     
     def _validate_and_clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -330,13 +282,7 @@ class AdvancedPlotter:
         if df.empty:
             return
         
-        # Check if we have complexes data
-        is_complexes = 'COMPLEXES' in df['metric'].unique()
-        
-        if is_complexes:
-            self._create_complexes_overview(df, output_dir)
-        else:
-            self._create_traditional_overview(df, output_dir)
+        self._create_traditional_overview(df, output_dir)
 
     def make_balanced(self, df: pd.DataFrame, random_state: int = 42) -> pd.DataFrame:
         """Downsample each condition to equal epochs per subject (and band if present)."""
@@ -371,39 +317,6 @@ class AdvancedPlotter:
                 balanced_records.append(group_df.loc[sampled_idx])
 
         return pd.concat(balanced_records, axis=0).reset_index(drop=True) if balanced_records else df
-    
-    def _create_complexes_overview(self, df: pd.DataFrame, output_dir: str):
-        """Create specialized overview for complexes analysis."""
-        fig = plt.figure(figsize=(24, 16))
-        gs = fig.add_gridspec(3, 4, hspace=0.3, wspace=0.3)
-        
-        # 1. Phi distribution by condition
-        ax1 = fig.add_subplot(gs[0, :2])
-        self._plot_phi_distributions(df, ax1)
-        
-        # 2. Complex size distribution
-        ax2 = fig.add_subplot(gs[0, 2:])
-        self._plot_complex_size_distribution(df, ax2)
-        
-        # 3. Channel participation frequency
-        ax3 = fig.add_subplot(gs[1, :2])
-        self._plot_channel_participation(df, ax3)
-        
-        # 4. Size vs Phi relationship
-        ax4 = fig.add_subplot(gs[1, 2:])
-        self._plot_size_phi_relationship(df, ax4)
-        
-        # 5. Spectral complexes analysis
-        ax5 = fig.add_subplot(gs[2, :])
-        self._plot_spectral_complexes(df, ax5)
-        
-        plt.suptitle('EEG Complexes Analysis: Comprehensive Overview', 
-                    fontsize=28, y=0.98, fontweight='bold')
-        
-        save_path = os.path.join(output_dir, 'comprehensive_overview.png')
-        plt.savefig(save_path, dpi=self.config.dpi, bbox_inches='tight')
-        plt.close()
-        print(f"✓ Saved complexes overview: {save_path}")
     
     def _create_traditional_overview(self, df: pd.DataFrame, output_dir: str):
         """Create traditional overview for complexity/MIB metrics."""
@@ -843,229 +756,60 @@ class AdvancedPlotter:
         
         print(f"✓ Saved statistical report: {save_path}")
 
-    # --- Complexes-Specific Plotting Functions ---
-    
-    def _plot_phi_distributions(self, df: pd.DataFrame, ax):
-        """Plot Φ (phi) value distributions by condition."""
-        sns.violinplot(data=df, x='condition', y='value', ax=ax, 
-                      palette=self.config.primary_palette, inner='box')
-        ax.set_title('Main Complex Φ Distribution by Condition', fontsize=16, fontweight='bold')
-        ax.set_ylabel('Max Φ per Epoch (bits)')
-        ax.set_xlabel('Condition')
-        ax.grid(True, alpha=0.3)
-
-    def _plot_complex_size_distribution(self, df: pd.DataFrame, ax):
-        """Plot distribution of complex sizes."""
-        sns.histplot(data=df, x='subset_size', hue='condition', ax=ax,
-                    palette=self.config.primary_palette, bins=range(2, 9), 
-                    alpha=0.7, kde=True)
-        ax.set_title('Main Complex Size Distribution', fontsize=16, fontweight='bold')
-        ax.set_xlabel('Main Complex Size (Number of Channels)')
-        ax.set_ylabel('Count')
-        ax.grid(True, alpha=0.3)
-
-    def _plot_channel_participation(self, df: pd.DataFrame, ax):
-        """Plot frequency of each channel's participation in complexes."""
-        if 'subset_channels' not in df.columns:
-            ax.text(0.5, 0.5, 'Channel information not available', 
-                   transform=ax.transAxes, ha='center', va='center',
-                   fontsize=14, alpha=0.7)
-            ax.set_title('Channel Participation Frequency', fontsize=16, fontweight='bold')
-            return
-        
-        # Count channel participation
-        channel_counts = {}
-        for _, row in df.iterrows():
-            for channel in row['subset_channels']:
-                condition = row['condition']
-                if condition not in channel_counts:
-                    channel_counts[condition] = {}
-                if channel not in channel_counts[condition]:
-                    channel_counts[condition][channel] = 0
-                channel_counts[condition][channel] += 1
-        
-        # Convert to DataFrame for plotting
-        plot_data = []
-        for condition, channels in channel_counts.items():
-            for channel, count in channels.items():
-                plot_data.append({'condition': condition, 'channel': channel, 'count': count})
-        
-        if plot_data:
-            plot_df = pd.DataFrame(plot_data)
-            sns.barplot(data=plot_df, x='channel', y='count', hue='condition', ax=ax,
-                       palette=self.config.primary_palette)
-            ax.set_title('Main Complex Channel Participation', fontsize=16, fontweight='bold')
-            ax.set_xlabel('EEG Channel')
-            ax.set_ylabel('Times in Main Complex')
-            plt.setp(ax.get_xticklabels(), rotation=45)
-        else:
-            ax.text(0.5, 0.5, 'No channel data available', 
-                   transform=ax.transAxes, ha='center', va='center',
-                   fontsize=14, alpha=0.7)
-
-    def _plot_size_phi_relationship(self, df: pd.DataFrame, ax):
-        """Plot relationship between complex size and Φ value."""
-        sns.scatterplot(data=df, x='subset_size', y='value', hue='condition', 
-                       ax=ax, palette=self.config.primary_palette, alpha=0.6, s=50)
-        
-        # Add trend lines
-        for condition in df['condition'].unique():
-            condition_data = df[df['condition'] == condition]
-            if len(condition_data) > 1:
-                sns.regplot(data=condition_data, x='subset_size', y='value', ax=ax,
-                           scatter=False, lowess=True, line_kws={'linewidth': 2})
-        
-        ax.set_title('Complex Size vs Φ Value', fontsize=16, fontweight='bold')
-        ax.set_xlabel('Complex Size (Number of Channels)')
-        ax.set_ylabel('Φ Value (bits)')
-        ax.grid(True, alpha=0.3)
-
-    def _plot_spectral_complexes(self, df: pd.DataFrame, ax):
-        """Plot spectral analysis of complexes."""
-        spectral_df = df[df['band'] != 'broadband'] if 'band' in df.columns else df
-        
-        if spectral_df.empty:
-            ax.text(0.5, 0.5, 'No spectral data available', 
-                   transform=ax.transAxes, ha='center', va='center',
-                   fontsize=14, alpha=0.7)
-            ax.set_title('Spectral Complexes Analysis', fontsize=16, fontweight='bold')
-            return
-
-        # Plot mean Φ by frequency band and condition
-        spectral_summary = spectral_df.groupby(['band', 'condition'])['value'].agg(['mean', 'sem']).reset_index()
-        
-        sns.lineplot(data=spectral_summary, x='band', y='mean', hue='condition',
-                    marker='o', markersize=8, linewidth=2.5, ax=ax,
-                    palette=self.config.primary_palette)
-        
-        # Add error bars
-        for condition in spectral_summary['condition'].unique():
-            condition_data = spectral_summary[spectral_summary['condition'] == condition]
-            ax.errorbar(range(len(condition_data)), condition_data['mean'], 
-                       yerr=condition_data['sem'], fmt='none', capsize=5, alpha=0.7)
-        
-        ax.set_title('Mean Φ by Frequency Band', fontsize=16, fontweight='bold')
-        ax.set_ylabel('Mean Φ Value (bits)')
-        ax.set_xlabel('Frequency Band')
-        ax.grid(True, alpha=0.3)
-        plt.setp(ax.get_xticklabels(), rotation=45)
-
     def create_gamma_analysis(self, gamma_df: pd.DataFrame, output_dir: str, min_phi: float = None):
-        """Create comprehensive gamma-only analysis.
-        Optionally filter to values >= min_phi and include a reference line at that threshold.
-        """
+        """Create gamma-only analysis focused on MIB distributions."""
         if gamma_df.empty:
             print("⚠️ No gamma band data available for analysis.")
             return
         
-        # Ensure output directory exists
         os.makedirs(output_dir, exist_ok=True)
 
-        # Apply Φ threshold if provided
         if min_phi is not None:
             gamma_df = gamma_df[gamma_df['value'] >= min_phi].copy()
+            if gamma_df.empty:
+                print(f"⚠️ No gamma records remain after applying Φ ≥ {min_phi} bits.")
+                return
         
         print(f"   📊 Gamma analysis: {len(gamma_df)} records across {gamma_df['condition'].nunique()} conditions" + (f" (Φ ≥ {min_phi} bits)" if min_phi is not None else ""))
         
-        # 1. Gamma-specific comprehensive overview
-        fig = plt.figure(figsize=(20, 12))
-        gs = fig.add_gridspec(2, 3, hspace=0.3, wspace=0.3)
+        fig = plt.figure(figsize=(18, 10))
+        gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
         
-        # Main complex Φ distribution for gamma
         ax1 = fig.add_subplot(gs[0, 0])
-        sns.violinplot(data=gamma_df, x='condition', y='value', ax=ax1, 
-                      palette=self.config.primary_palette, inner='box')
-        ax1.set_title('Gamma Band: Main Complex Φ Distribution', fontsize=14, fontweight='bold')
-        ax1.set_ylabel('Max Φ per Epoch (bits)')
+        sns.violinplot(data=gamma_df, x='condition', y='value', hue='metric_estimator',
+                       palette=self.config.primary_palette, inner='box', ax=ax1)
+        ax1.set_title('Gamma Band MIB Distribution', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('MIB (bits)')
         ax1.set_xlabel('Condition')
         ax1.grid(True, alpha=0.3)
         if min_phi is not None:
             ax1.axhline(min_phi, color='red', linestyle='--', linewidth=1, alpha=0.7)
-            ax1.text(0.98, min_phi, f"Φ = {min_phi} bit", va='bottom', ha='right', transform=ax1.get_yaxis_transform(), fontsize=9, color='red')
         
-        # Complex size distribution for gamma
         ax2 = fig.add_subplot(gs[0, 1])
-        sns.histplot(data=gamma_df, x='subset_size', hue='condition', ax=ax2,
-                    palette=self.config.primary_palette, bins=range(2, 9), 
-                    alpha=0.7, kde=False, discrete=True)
-        ax2.set_title('Gamma Band: Main Complex Size', fontsize=14, fontweight='bold')
-        ax2.set_xlabel('Complex Size (Channels)')
-        ax2.set_ylabel('Count')
-        ax2.grid(True, alpha=0.3)
+        self._plot_statistical_summary(gamma_df, ax2)
+        ax2.set_title('Gamma Band Summary', fontsize=14, fontweight='bold')
         
-        # Channel participation for gamma
-        ax3 = fig.add_subplot(gs[0, 2])
-        self._plot_gamma_channel_participation(gamma_df, ax3)
+        ax3 = fig.add_subplot(gs[1, 0])
+        self._plot_effect_sizes(gamma_df, ax3)
+        ax3.set_title('Gamma Band Effect Sizes', fontsize=14, fontweight='bold')
         
-        # Size vs Phi relationship for gamma
-        ax4 = fig.add_subplot(gs[1, 0])
-        sns.scatterplot(data=gamma_df, x='subset_size', y='value', hue='condition', 
-                       ax=ax4, palette=self.config.primary_palette, alpha=0.7, s=60)
-        ax4.set_title('Gamma Band: Size vs Φ', fontsize=14, fontweight='bold')
-        ax4.set_xlabel('Complex Size')
-        ax4.set_ylabel('Φ Value (bits)')
+        ax4 = fig.add_subplot(gs[1, 1])
+        sns.boxplot(data=gamma_df, x='subject', y='value', hue='condition',
+                    palette=self.config.primary_palette, ax=ax4)
+        ax4.set_title('Per-Subject Gamma MIB', fontsize=14, fontweight='bold')
+        ax4.set_ylabel('MIB (bits)')
+        ax4.set_xlabel('Subject')
+        plt.setp(ax4.get_xticklabels(), rotation=45, ha='right')
         ax4.grid(True, alpha=0.3)
-        if min_phi is not None:
-            ax4.axhline(min_phi, color='red', linestyle='--', linewidth=1, alpha=0.7)
         
-        # Statistical comparison
-        ax5 = fig.add_subplot(gs[1, 1])
-        self._plot_gamma_statistics(gamma_df, ax5, min_phi=min_phi)
-        
-        # Time series of main complex Φ (if epoch info available)
-        ax6 = fig.add_subplot(gs[1, 2])
-        self._plot_gamma_time_series(gamma_df, ax6, min_phi=min_phi)
-        
-        plt.suptitle('Gamma Band Analysis: Main Complex Integration', 
-                    fontsize=18, fontweight='bold', y=0.98)
-        
+        plt.suptitle('Gamma Band Analysis (MIB)', fontsize=18, fontweight='bold', y=0.98)
         save_path = os.path.join(output_dir, 'gamma_comprehensive_analysis.png')
         plt.savefig(save_path, dpi=self.config.dpi, bbox_inches='tight')
         plt.close()
         print(f"✓ Saved gamma comprehensive analysis: {save_path}")
         
-        # 2. Detailed gamma statistical report
         self._create_gamma_statistical_report(gamma_df, output_dir)
-        
-        # 3. Gamma-specific raincloud plot
         self._create_gamma_raincloud(gamma_df, output_dir)
-
-    def _plot_gamma_channel_participation(self, gamma_df: pd.DataFrame, ax):
-        """Plot channel participation specifically for gamma band."""
-        if 'subset_channels' not in gamma_df.columns:
-            ax.text(0.5, 0.5, 'Channel info not available', 
-                   transform=ax.transAxes, ha='center', va='center')
-            ax.set_title('Gamma: Channel Participation', fontsize=14, fontweight='bold')
-            return
-        
-        # Count participation
-        channel_counts = {}
-        for _, row in gamma_df.iterrows():
-            for channel in row['subset_channels']:
-                condition = row['condition']
-                if condition not in channel_counts:
-                    channel_counts[condition] = {}
-                if channel not in channel_counts[condition]:
-                    channel_counts[condition][channel] = 0
-                channel_counts[condition][channel] += 1
-        
-        # Convert to plotting format
-        plot_data = []
-        for condition, channels in channel_counts.items():
-            for channel, count in channels.items():
-                plot_data.append({'condition': condition, 'channel': channel, 'count': count})
-        
-        if plot_data:
-            plot_df = pd.DataFrame(plot_data)
-            sns.barplot(data=plot_df, x='channel', y='count', hue='condition', ax=ax,
-                       palette=self.config.primary_palette)
-            ax.set_title('Gamma: Channel Participation', fontsize=14, fontweight='bold')
-            ax.set_xlabel('EEG Channel')
-            ax.set_ylabel('Times in Main Complex')
-            plt.setp(ax.get_xticklabels(), rotation=45)
-        else:
-            ax.text(0.5, 0.5, 'No channel data', 
-                   transform=ax.transAxes, ha='center', va='center')
 
     def _plot_gamma_statistics(self, gamma_df: pd.DataFrame, ax, min_phi: float = None):
         """Plot statistical summary for gamma band."""
@@ -1089,28 +833,6 @@ class AdvancedPlotter:
         for bar, mean_val in zip(bars, stats_data['mean']):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
                    f'{mean_val:.3f}', ha='center', va='bottom', fontsize=10)
-
-    def _plot_gamma_time_series(self, gamma_df: pd.DataFrame, ax, min_phi: float = None):
-        """Plot time series of gamma main complex Φ if epoch info available."""
-        if 'epoch_idx' in gamma_df.columns:
-            # Plot time series by condition
-            for condition in gamma_df['condition'].unique():
-                condition_data = gamma_df[gamma_df['condition'] == condition].sort_values('epoch_idx')
-                ax.plot(condition_data['epoch_idx'], condition_data['value'], 
-                       label=condition, alpha=0.7, linewidth=1.5)
-            
-            ax.set_title('Gamma: Φ Time Series', fontsize=14, fontweight='bold')
-            ax.set_xlabel('Epoch Index')
-            ax.set_ylabel('Φ Value (bits)')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            if min_phi is not None:
-                ax.axhline(min_phi, color='red', linestyle='--', linewidth=1, alpha=0.7)
-        else:
-            ax.text(0.5, 0.5, 'Epoch information\nnot available', 
-                   transform=ax.transAxes, ha='center', va='center',
-                   fontsize=12, alpha=0.7)
-            ax.set_title('Gamma: Time Series', fontsize=14, fontweight='bold')
 
     def _create_gamma_statistical_report(self, gamma_df: pd.DataFrame, output_dir: str):
         """Create detailed statistical report for gamma band."""
