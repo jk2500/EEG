@@ -1,0 +1,19 @@
+{
+  "include": [
+    "src",
+    "tests",
+    "run_analysis.py",
+    "main.py",
+    "visualize_results.py"
+  ],
+  "exclude": [
+    "ds005620"
+  ],
+  "extraPaths": [
+    "src"
+  ],
+  "typeCheckingMode": "standard",
+  "reportMissingImports": true,
+  "pythonVersion": "3.11"
+}
+
