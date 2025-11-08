@@ -400,6 +400,117 @@ def run_batch_analysis(estimator_name, dataset_dir, output_dir, n_channels, samp
     log_print(f"Total subjects processed: {len(subjects_to_process)} in {total_time/60:.1f} minutes", verbose)
     log_print(f"Results saved to: {output_dir}", verbose)
 
+
+def run_flow_cli(args):
+    """
+    Entry point for the ACFlow training workflow.
+    """
+
+    if not args.flow_train_data:
+        raise SystemExit("ERROR: --flow-train-data must be provided when using --flow-mode train.")
+
+    from eeg_analysis.flows import (
+        ACFlow,
+        ACFlowConfig,
+        ACFlowTrainer,
+        ChannelwiseStandardizer,
+        EEGWindowDataset,
+        MaskSampler,
+        MaskSamplerConfig,
+        TrainerConfig,
+        create_dataloader,
+    )
+
+    run_id = args.flow_run_id or time.strftime("acflow_%Y%m%d_%H%M%S")
+    normalizer = ChannelwiseStandardizer() if args.flow_fit_normalizer else None
+    pin_memory = not args.flow_no_pin_memory
+
+    train_dataset = EEGWindowDataset(
+        args.flow_train_data,
+        memmap=True,
+        normalizer=normalizer,
+        fit_normalizer=args.flow_fit_normalizer,
+    )
+    if train_dataset.feature_dim != args.flow_input_dim:
+        raise SystemExit(
+            f"Train data feature dimension ({train_dataset.feature_dim}) "
+            f"does not match --flow-input-dim ({args.flow_input_dim})."
+        )
+
+    train_loader = create_dataloader(
+        train_dataset,
+        batch_size=args.flow_batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=args.flow_workers,
+        pin_memory=pin_memory,
+    )
+
+    val_loader = None
+    if args.flow_val_data:
+        val_dataset = EEGWindowDataset(
+            args.flow_val_data,
+            memmap=True,
+            normalizer=normalizer,
+            fit_normalizer=False,
+        )
+        if val_dataset.feature_dim != args.flow_input_dim:
+            raise SystemExit(
+                f"Validation data feature dimension ({val_dataset.feature_dim}) "
+                f"does not match --flow-input-dim ({args.flow_input_dim})."
+            )
+        val_loader = create_dataloader(
+            val_dataset,
+            batch_size=args.flow_batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=args.flow_workers,
+            pin_memory=pin_memory,
+        )
+
+    flow_config = ACFlowConfig(
+        input_dim=args.flow_input_dim,
+        hidden_dim=args.flow_hidden_dim,
+        num_blocks=args.flow_blocks,
+        conditioner_depth=args.flow_conditioner_depth,
+        dropout=args.flow_dropout,
+        scale_clip=args.flow_scale_clip,
+    )
+    trainer_config = TrainerConfig(
+        batch_size=args.flow_batch_size,
+        max_epochs=args.flow_epochs,
+        learning_rate=args.flow_lr,
+        weight_decay=args.flow_weight_decay,
+        gradient_clip=args.flow_grad_clip,
+        use_amp=not args.flow_disable_amp,
+        val_interval=max(1, args.flow_val_interval),
+        early_stopping_patience=args.flow_patience,
+        log_interval=args.flow_log_interval,
+        checkpoint_dir=Path(args.flow_checkpoint_dir),
+        run_id=run_id,
+    )
+    mask_config = MaskSamplerConfig(
+        dim=args.flow_input_dim,
+        min_condition=args.flow_min_condition,
+        seed=args.flow_seed,
+    )
+
+    trainer = ACFlowTrainer(
+        ACFlow(flow_config),
+        trainer_config,
+        mask_sampler=MaskSampler(mask_config),
+    )
+    checkpoint_name = args.flow_checkpoint_name or f"{run_id}.pt"
+
+    print(f"[ACFlowTrainer] Starting run {run_id} with {args.flow_blocks} blocks and hidden dim {args.flow_hidden_dim}.")
+    trainer.fit(
+        train_loader,
+        val_loader=val_loader,
+        checkpoint_name=checkpoint_name,
+        verbose=not args.flow_quiet,
+    )
+    print(f"[ACFlowTrainer] Completed run {run_id}. Latest metrics: {trainer.history[-1] if trainer.history else 'N/A'}")
+
 # --- Command-Line Interface ---
 
 def main():
@@ -433,7 +544,7 @@ Examples:
     
     parser.add_argument('--interactive', action='store_true',
                         help='Force interactive mode (default when no other args provided).')
-    parser.add_argument('--estimator', required=True, choices=['ksg', 'binning', 'gaussian'],
+    parser.add_argument('--estimator', required=False, choices=['ksg', 'binning', 'gaussian'],
                         help='The MI estimator to use.')
     parser.add_argument('--dataset', default=DATASET_DIR,
                         help=f'Path to the dataset directory (default: {DATASET_DIR})')
@@ -449,8 +560,69 @@ Examples:
                         help='Suppress verbose output and show progress bars instead.')
     parser.add_argument('--resume', action='store_true',
                         help='Resume from a checkpoint if available.')
+    parser.add_argument('--flow-mode', choices=['train'], default=None,
+                        help='Run the ACFlow pipeline instead of the classical estimators.')
+    parser.add_argument('--flow-train-data', default=None,
+                        help='Path to the training windows (.npy) for ACFlow.')
+    parser.add_argument('--flow-val-data', default=None,
+                        help='Optional validation windows (.npy) for ACFlow.')
+    parser.add_argument('--flow-input-dim', type=int, default=64,
+                        help='Dimensionality (channels) for the ACFlow model.')
+    parser.add_argument('--flow-hidden-dim', type=int, default=512,
+                        help='Hidden width of ACFlow conditioners.')
+    parser.add_argument('--flow-blocks', type=int, default=8,
+                        help='Number of coupling blocks.')
+    parser.add_argument('--flow-conditioner-depth', type=int, default=3,
+                        help='Number of layers inside each conditioner MLP.')
+    parser.add_argument('--flow-dropout', type=float, default=0.05,
+                        help='Dropout rate inside the conditioner.')
+    parser.add_argument('--flow-scale-clip', type=float, default=5.0,
+                        help='Maximum log-scale magnitude for affine couplings.')
+    parser.add_argument('--flow-batch-size', type=int, default=512,
+                        help='Training batch size for ACFlow.')
+    parser.add_argument('--flow-epochs', type=int, default=50,
+                        help='Number of training epochs for ACFlow.')
+    parser.add_argument('--flow-lr', type=float, default=1e-3,
+                        help='Learning rate for ACFlow.')
+    parser.add_argument('--flow-weight-decay', type=float, default=1e-6,
+                        help='Weight decay for ACFlow optimizer.')
+    parser.add_argument('--flow-grad-clip', type=float, default=1.0,
+                        help='Gradient clipping value for ACFlow.')
+    parser.add_argument('--flow-seed', type=int, default=0,
+                        help='Random seed for mask sampling.')
+    parser.add_argument('--flow-min-condition', type=int, default=8,
+                        help='Minimum observed set size during training.')
+    parser.add_argument('--flow-val-interval', type=int, default=1,
+                        help='Validate every N epochs.')
+    parser.add_argument('--flow-patience', type=int, default=10,
+                        help='Early stopping patience for ACFlow.')
+    parser.add_argument('--flow-log-interval', type=int, default=50,
+                        help='Steps between training log prints.')
+    parser.add_argument('--flow-checkpoint-dir', default='artifacts/checkpoints',
+                        help='Directory to store ACFlow checkpoints.')
+    parser.add_argument('--flow-checkpoint-name', default=None,
+                        help='Optional checkpoint filename.')
+    parser.add_argument('--flow-run-id', default=None,
+                        help='Custom run identifier for ACFlow.')
+    parser.add_argument('--flow-disable-amp', action='store_true',
+                        help='Disable mixed precision during ACFlow training.')
+    parser.add_argument('--flow-fit-normalizer', action='store_true',
+                        help='Fit a channel-wise normalizer on the training data before ACFlow training.')
+    parser.add_argument('--flow-workers', type=int, default=0,
+                        help='Number of dataloader workers for ACFlow.')
+    parser.add_argument('--flow-no-pin-memory', action='store_true',
+                        help='Disable dataloader pin_memory for ACFlow (useful on CPU-only machines).')
+    parser.add_argument('--flow-quiet', action='store_true',
+                        help='Silence ACFlow trainer logging.')
     
     args = parser.parse_args()
+
+    if args.flow_mode:
+        run_flow_cli(args)
+        return
+    
+    if args.estimator is None:
+        parser.error("--estimator is required unless --flow-mode is provided.")
     
     try:
         run_batch_analysis(

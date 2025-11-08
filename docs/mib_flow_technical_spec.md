@@ -178,3 +178,172 @@ For a set of candidate partitions \{(A_j,B_j)\}{j=1}^{N_c} and samples \{x^{(m)}
 	•	Two forward passes over the model (one for all unconditionals, one for all conditionals) returning per‑sample log‑probs for the requested target indices; then average over samples and subtract.
 	•	Complexity per iteration: 2 model passes (independent of N_c) + cheap reductions.
 
+⸻
+
+9. System architecture & data flow
+
+9.1 End‑to‑end flow
+	1.	Data ingestion: Load preprocessed per‑window features from disk (NumPy memmap preferred) along with metadata (subject, session, state labels). Persist a manifest JSON/YAML capturing file hashes and channel order.
+	2.	Splitting: Deterministically create train/val/test indices (subject‑ or session‑level blocking) and persist to `artifacts/splits/{run_id}.json`.
+	3.	Normalization cache: Fit scalers on the train split only, store in `artifacts/scalers/{run_id}.pt`, and apply lazily during training/evaluation.
+	4.	ACFlow training: Launch the conditional flow trainer (single script `run_analysis.py --mode train-flow`) that streams batches via PyTorch `IterableDataset`, samples masks, and checkpoints to `artifacts/checkpoints/{run_id}`.
+	5.	Checkpoint selection: Pick the best validation NLL checkpoint and export a frozen evaluation bundle (`state_dict`, config, scaler, mask sampler spec).
+	6.	MIB search: Invoke `run_analysis.py --mode search-mib --checkpoint <path>` which loads the frozen bundle, enumerates/searches partitions on the validation split, and produces candidate partitions with MI estimates.
+	7.	Final evaluation: Re‑evaluate the top‐k partitions on the held‑out test split with bootstrap CI and store results under `artifacts/results/{timestamp}.parquet`.
+	8.	Reporting & visualization: Generate plots/tables via `visualize_results.py` and embed into a markdown/HTML report for review.
+
+9.2 Logical components
+	•	Data layer: Dataset manifest, normalization cache, deterministic split registry.
+	•	Model trainer: PyTorch module implementing ACFlow, mask sampler, optimization loop, early stopping, logging hooks.
+	•	Evaluator: Utilities that given a checkpoint and batch of masks return per‑sample log densities (both conditional and marginal).
+	•	Search engine: Kernighan–Lin/annealing hybrid operating on in‑memory bitmasks with batched log prob lookups and caching.
+	•	Reporting layer: Result schema, persistence adapters (Parquet/JSON), plotting utilities (Matplotlib/Seaborn/Plotly).
+
+9.3 Data movement & caching
+	•	Primary tensors live in pinned host memory; GPU receives only the target subsets per batch to minimize PCIe load.
+	•	Log prob outputs for each candidate partition are cached as `[partition_hash, log_p(X_A), log_p(X_A|X_B)]` arrays; incremental swaps reuse existing cache rows when only one channel is moved.
+	•	Bootstrap resamples materialize only the partition scores (scalar per replicate) to keep memory bounded.
+
+9.4 Observability & logging
+	•	All stages log to both console and `artifacts/logs/<run_id>.jsonl` with structured entries (event, step, metrics, hash of config).
+	•	Training metrics: global step, lr, train/val NLL, gradient norm, parameter norm, mask entropy.
+	•	Search metrics: iteration, partition hash, MI (train/val/test), gain per swap, annealing temperature.
+	•	CI metrics: bootstrap percentile bounds, number of resamples, seed.
+
+⸻
+
+10. Implementation details
+
+10.1 Data interfaces & storage
+	•	Input root: `data/processed/<dataset>/windows.npy` plus `windows.meta.json` describing sampling rate, window params, channel labels, subject/session IDs.
+	•	Each run references data via a config object (`configs/mib_flow.yaml`) that includes paths, split keys, and preprocessing hashes; configs are versioned in git.
+	•	Dataset loader exposes a `Batch` dataclass with tensors (`x`, `mask`, `conditioning_values`), metadata (subject, state), and normalization stats used.
+	•	Use memory mapping (`np.memmap`) for `windows.npy` to stream large datasets without loading fully into RAM.
+
+10.2 Flow training module
+	•	Code organization: `src/eeg_analysis/flows/acflow.py` (model definition), `train_flow.py` (loop), `mask_sampler.py`.
+	•	Mask sampler pseudocode:
+```
+def sample_mask(batch_size, dim=64):
+    modes = np.random.choice(["uncond","bipart","random"], p=[0.2,0.5,0.3], size=batch_size)
+    masks = np.zeros((batch_size, dim), dtype=bool)
+    for i, mode in enumerate(modes):
+        if mode == "uncond":
+            continue
+        elif mode == "bipart":
+            k = triangular_sample(8, dim-8)
+        else:
+            k = np.random.randint(1, dim-1)
+        observed = rng.choice(dim, size=dim-k, replace=False)
+        masks[i, observed] = 1
+    return masks
+```
+	•	Training loop steps: fetch batch → sample masks → split tensors into observed/unobserved sets via fancy indexing → forward through ACFlow (conditioner receives zero‑filled unobserved dims + mask) → compute loss (mean conditional log prob) → optimizer step → periodic validation on a fixed mask pool.
+	•	Scheduler: cosine decay with warmup or ReduceLROnPlateau triggered by validation NLL stagnation.
+	•	Checkpoint payload: model weights, optimizer, scheduler, scaler params, mask sampler config, git SHA, dependency versions.
+
+10.3 MI evaluation & search module
+	•	Represent partitions as 64‑bit bitmasks (Python `int` or `torch.bool` tensor); maintain both sets explicitly for logging.
+	•	Precompute per‑partition tensors `target_idx` and `condition_idx` so the evaluator only does gather/scatter once per iteration.
+	•	Batched MI evaluation API:
+```
+scores = evaluator.log_probs(target_idx_batch, condition_idx_batch, split="val")
+mi = (scores["cond"] - scores["marg"]).mean(dim=0)
+```
+	•	Search loop outline:
+		1.	Initialize `P` random balanced partitions (multi‑start).
+		2.	For each partition, evaluate MI and populate a priority queue.
+		3.	Iteratively pick the best partition, enumerate all 1‑swap neighbors (bounded by tabu list), evaluate via batched call, and accept the best improving (or annealed) move.
+		4.	Track stagnation; when no improvement for `T` iterations, restart from a new seed using elite partitions plus random noise (channel shuffles).
+	•	Annealing schedule: temperature T decays exponentially; uphill move probability `exp(-Δ/T)`; reset T on restart.
+
+10.4 Orchestration & CLI
+	•	Primary entry point `run_analysis.py` with subcommands/modes (`train-flow`, `search-mib`, `evaluate`, `report`).
+	•	Configuration handled via OmegaConf/Hydra (or argparse + YAML) enabling overrides such as `python run_analysis.py mode=train-flow data.dataset=sedation flow.hidden=512`.
+	•	All commands accept `--run-id` (default timestamp) to namespace artifacts.
+	•	`visualize_results.py` loads the consolidated results parquet and generates:
+		•	MI vs. iteration plots.
+		•	Partition chord diagrams (channels grouped by anatomical label if provided).
+		•	Bootstrap CI histograms.
+
+10.5 Reproducibility hooks
+	•	Global seeding (Python, NumPy, PyTorch, CUDA) at the start of every command; seed stored with run metadata.
+	•	Config + git SHA + package versions serialized to `artifacts/config_snapshot.yaml`.
+	•	Optional dry‑run mode that runs a miniature dataset (e.g., 128 windows, 32 channels) for CI.
+
+⸻
+
+11. Validation & testing
+
+11.1 Data quality checks
+	•	Schema validation on manifests (channel count, sampling rate, window length).
+	•	Per‑channel summary stats (mean, std, missing ratio) compared against historical baselines with alert thresholds.
+	•	Leakage guard: assert no subject/session overlap across splits; store hashes to guarantee immutability.
+
+11.2 Model evaluation
+	•	Track train/val NLL curves; stop if divergence >3 nats over 3 epochs.
+	•	Calibration check: evaluate `\log p_\theta(x)` on a synthetic Gaussian dataset where the true log density is known to ensure the implementation is unbiased.
+	•	Mask coverage diagnostic: log empirical distribution of observed set sizes; abort if any bucket (<5% of samples) is underrepresented.
+
+11.3 MI estimator sanity
+	•	Self‑consistency: verify `I_\theta(A;B)≈I_\theta(B;A)` within tolerance (≤1e-3 nats) for random partitions.
+	•	Zero‑information control: shuffle samples independently across channels to destroy dependencies and confirm MI≈0.
+	•	Known partition test: inject synthetic blocks with planted low/high MI to ensure the search recovers the planted split.
+
+11.4 Testing strategy
+	•	Unit tests for mask sampling, log prob API, caching, bootstrap utilities (PyTest under `tests/flows`, `tests/mib`).
+	•	Integration test that runs a miniature flow (D=4) end‑to‑end through search and reporting; executed in CI.
+	•	Regression suite capturing MI outputs for frozen checkpoints to detect future drift.
+
+⸻
+
+12. Compute & resource plan
+
+12.1 Hardware
+	•	Training: 1× NVIDIA RTX 4090 or A5000 (24 GB) or equivalent; mixed precision keeps memory <12 GB for batch 1024.
+	•	Evaluation/search: GPU‐optional; CPU fallback uses vectorized PyTorch on MKL but ~5× slower. Target 32‑core CPU, 128 GB RAM for bootstrap heavy workloads.
+
+12.2 Runtime estimates (for N=200k windows)
+	•	Data loading + normalization cache: <10 min.
+	•	Flow training (100 epochs, batch 1024): ~6 hrs on 4090.
+	•	MIB search (50 multi‑starts, 200 iterations each): ~2 hrs GPU, ~8 hrs CPU.
+	•	Bootstrap CI (1000 replicates, cached log probs): 30–45 min CPU.
+
+12.3 Storage
+	•	Dataset: ~5 GB per sedation/awake pair.
+	•	Checkpoints: ≤500 MB per run (best + last + optimizer).
+	•	Logs/results: <100 MB per run.
+	•	Cleanup policy: retain best checkpoint + result summary; archive raw logs >30 days.
+
+12.4 Failure handling
+	•	Trainer resumes from the latest checkpoint (tracked in `artifacts/last.ckpt`).
+	•	Evaluator is stateless; rerunning with the same `run-id` overwrites caches only after success to avoid corruption.
+	•	Bootstrap supports chunking/resume by persisting partial replicate results.
+
+⸻
+
+13. Risks & mitigations
+	1.	Model underfits or collapses on hard masks → Increase conditioner capacity, add mask‑dropout regularization, monitor per‑mask losses.
+	2.	Data scarcity for certain states → Use subject‑level cross‑validation, augment with noise injection limited to within channels, or aggregate across compatible sessions.
+	3.	Search stagnates in local minima → Increase multi‑starts, incorporate larger swap moves (2‑opt), tune annealing schedule, or hybridize with genetic search for diversification.
+	4.	Estimator bias from model misspecification → Validate with synthetic datasets where ground truth MI is computable; if needed, ensemble multiple flow checkpoints and average MI.
+	5.	Compute/resource constraints → Provide knobs for dimensionality reduction (subset of channels) and lower batch sizes; support CPU fallback albeit slower.
+	6.	Reproducibility drift → Enforce config snapshots, hashed datasets, CI tests on miniature runs.
+
+⸻
+
+14. Milestones & deliverables
+
+| Phase | Duration | Key outputs |
+| --- | --- | --- |
+| 0. Data readiness | 1 week | Finalized manifests, normalization cache, deterministic splits, QC report. |
+| 1. ACFlow baseline | 2 weeks | Working training loop, mask sampler, baseline checkpoint with target val NLL, logging dashboard. |
+| 2. MIB search engine | 2 weeks | Batched evaluator, swap/annealing search, caching layer, preliminary partitions on validation split. |
+| 3. Test split + CI | 1 week | Held‑out MI estimates with bootstrap CI, reproducibility scripts. |
+| 4. Reporting & polish | 1 week | Visualization bundle, markdown/HTML report, README updates, final tech spec review. |
+
+Critical exit criteria:
+	•	Validated ACFlow checkpoint meeting val NLL target.
+	•	Search recovers low‑MI partitions consistently across seeds.
+	•	Test split MI + CI reported with reproducibility artifacts.
+	•	Documentation + automation ready for handoff.
