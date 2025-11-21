@@ -46,6 +46,7 @@ from eeg_analysis.config import (  # type: ignore
     DEFAULT_OUTPUT_DIR,
     GAUSSIAN_PARAMS,
     KSG_PARAMS,
+    SPECTRAL_BANDS,
 )
 from eeg_analysis.analyzers.complexity_analyzer import ComplexityAnalyzer  # type: ignore
 from eeg_analysis.analyzers.estimators import (  # type: ignore
@@ -301,6 +302,7 @@ def run_random_channel_mib_broadband(
     epoch_length: float,
     rng_seed: int,
     fixed_channels: Optional[List[str]],
+    bands: Optional[List[str]],
     output_dir: Path,
     verbose: bool,
     n_jobs: Optional[int],
@@ -368,11 +370,13 @@ def run_random_channel_mib_spectral(
     epoch_length: float,
     rng_seed: int,
     fixed_channels: Optional[List[str]],
+    bands: Optional[List[str]],
     output_dir: Path,
     verbose: bool,
     n_jobs: Optional[int],
 ) -> Path:
     analyzer = _build_analyzer(estimator_name, n_channels, epoch_length, verbose=False, n_jobs=n_jobs)
+    band_list = bands or list(SPECTRAL_BANDS.keys())
     log_print(f"Loading EEG and preparing spectral-band epochs from {vhdr_path.name}...", verbose)
     raw = mne.io.read_raw_brainvision(str(vhdr_path), preload=True, verbose=False)
     band_data, channel_names = preprocess_eeg_by_bands(
@@ -381,6 +385,7 @@ def run_random_channel_mib_spectral(
         target_sfreq=ANALYSIS_PARAMS.get("target_sfreq", 500.0),
         reference_channel=ANALYSIS_PARAMS.get("reference_channel", "A2"),
         use_all_channels=True,
+        bands=band_list,
         verbose=False,
     )
 
@@ -415,6 +420,7 @@ def run_random_channel_mib_spectral(
         "epoch_length": float(epoch_length),
         "estimator": estimator_name,
         "all_channel_names": channel_names,
+        "selected_bands": band_list,
         "bands": per_band_results,
     }
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -462,6 +468,7 @@ def run_dataset(
     verbose: bool,
     included_conditions: Optional[Iterable[str]] = None,
     n_jobs: Optional[int] = None,
+    bands: Optional[List[str]] = None,
 ) -> List[Path]:
     generated_files: List[Path] = []
     subject_map = _iter_subjects(dataset_dir, subjects, verbose)
@@ -535,6 +542,7 @@ def run_dataset(
                                 epoch_length=epoch_length,
                                 rng_seed=rng_seed,
                                 fixed_channels=fixed_channels,
+                                bands=bands,
                                 output_dir=spectral_dir,
                                 verbose=verbose,
                                 n_jobs=n_jobs,
@@ -628,6 +636,13 @@ def _parse_args() -> argparse.Namespace:
         help="Whether to run broadband, spectral, or both analyses.",
     )
     parser.add_argument(
+        "--bands",
+        nargs="+",
+        choices=list(SPECTRAL_BANDS.keys()),
+        default=None,
+        help="Subset of spectral bands to include (default: all).",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=str(Path(DEFAULT_OUTPUT_DIR) / "mib_random_channels"),
@@ -678,6 +693,7 @@ def cli_main() -> None:
                         epoch_length=float(epoch_length),
                         rng_seed=int(args.rng_seed),
                         fixed_channels=fixed_channels,
+                        bands=args.bands,
                         output_dir=spectral_dir,
                         verbose=verbose,
                         n_jobs=int(args.jobs),
@@ -705,6 +721,7 @@ def cli_main() -> None:
         verbose=verbose,
         included_conditions=included_conditions,
         n_jobs=int(args.jobs),
+        bands=args.bands,
     )
     if verbose:
         log_print(f"\nGenerated {len(generated)} result files.", True)

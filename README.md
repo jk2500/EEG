@@ -1,6 +1,6 @@
 # EEG Random-Channel MIB Runner
 
-Compute Minimum Information Bipartition (MIB) statistics from EEG recordings by repeatedly sampling channel subsets (broadband and/or spectral bands). The single public entrypoint is `random_channels_mib.py`; legacy wrappers `main.py` and `run_analysis.py` forward to it.
+Compute Minimum Information Bipartition (MIB) statistics from EEG recordings by repeatedly sampling channel subsets (broadband and/or spectral bands). The single public entrypoint is `random_channels_mib.py`.
 
 ## Setup
 - Use a recent Python 3 environment and install dependencies: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`.
@@ -19,6 +19,7 @@ Compute Minimum Information Bipartition (MIB) statistics from EEG recordings by 
 - `--estimators` choose among `ksg`, `binning`, `gaussian`.
 - `--epoch-lengths` one or more epoch durations (seconds); `--n-channels` channels per random draw; `--repeats` number of random subsets.
 - `--jobs` number of parallel workers for epoch evaluation (`-1` = all cores).
+- `--bands` limit spectral runs to specific bands (e.g., `--bands beta gamma`); defaults to all bands in config.
 - `--fixed-channels` pins the epoch-stability check to a provided channel list; defaults to `channels_list` in the config.
 - `--quiet` suppresses verbose logging.
 

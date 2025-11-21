@@ -1,9 +1,7 @@
 {
   "include": [
     "src",
-    "tests",
-    "run_analysis.py",
-    "main.py",
+    "tests",d
     "visualize_results.py"
   ],
   "exclude": [
@@ -16,4 +14,3 @@
   "reportMissingImports": true,
   "pythonVersion": "3.11"
 }
-

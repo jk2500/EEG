@@ -117,7 +117,7 @@ def _summarize(
 
     keep_cols = ["band", "subject", "condition", "mean", "std", "cv", "repeats", "stable", "file"]
     print("\nPer-condition stability (lower CV is better):")
-    print(df[keep_cols].sort_values(["band", "condition", "subject"]).to_string(index=False, float_format="%.4f"))
+    print(df[keep_cols].sort_values(by=["band", "condition", "subject"]).to_string(index=False, float_format="%.4f"))
 
     # Within-subject ordering: eyes-open > eyes-closed > sedation_1
     expected_order = ["awake_eyes_open", "awake_eyes_closed", "sedation_1"]
@@ -125,7 +125,12 @@ def _summarize(
     for subject in sorted(df["subject"].unique()):
         for band in sorted(df["band"].unique()):
             sub = df[(df["subject"] == subject) & (df["band"] == band)]
-            means = {cond: sub[sub["condition"] == cond]["mean"].iloc[0] for cond in expected_order if not sub[sub["condition"] == cond].empty}
+            means = {}
+            for cond in expected_order:
+                cond_values = sub.loc[sub["condition"] == cond, "mean"]
+                if not cond_values.empty:
+                    means[cond] = float(cond_values.iloc[0])
+
             open_mean = means.get("awake_eyes_open", math.nan)
             closed_mean = means.get("awake_eyes_closed", math.nan)
             sed_mean = means.get("sedation_1", math.nan)
@@ -152,7 +157,7 @@ def _summarize(
         order_df = pd.DataFrame(order_rows)
         print("\nWithin-subject ordering (expect eyes_open > eyes_closed > sedation_1):")
         print(
-            order_df.sort_values(["band", "subject"])
+            order_df.sort_values(by=["band", "subject"])
             .to_string(index=False, float_format="%.4f")
         )
 
@@ -188,7 +193,7 @@ def _summarize(
         print("\nCross-subject differences (absolute mean delta):")
         print(
             pivot[["band", "condition", subj_a, subj_b, "abs_delta", "diff_flag"]]
-            .sort_values(["band", "condition"])
+            .sort_values(by=["band", "condition"])
             .to_string(index=False, float_format="%.4f")
         )
     else:
@@ -221,7 +226,7 @@ def main() -> None:
         else:
             records.extend(_extract_spectral_records(path))
 
-    df = pd.DataFrame(records)
+    df: pd.DataFrame = pd.DataFrame(records)
     if args.estimator:
         df = df[df["estimator"] == args.estimator]
     if args.epoch_length is not None:

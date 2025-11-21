@@ -113,15 +113,22 @@ def preprocess_eeg(raw, **kwargs):
                 
     return epochs_data, raw_copy.ch_names
 
-def preprocess_eeg_by_bands(raw, **kwargs):
+def preprocess_eeg_by_bands(raw, bands=None, **kwargs):
     """
     Preprocess EEG data by spectral bands.
     """
     params = {**ANALYSIS_PARAMS, **kwargs}
     use_all_channels = params.get('use_all_channels', False)
     band_data = {}
+    ch_names = []
+
+    requested_bands = [b.lower() for b in bands] if bands else list(SPECTRAL_BANDS.keys())
+    missing = [b for b in requested_bands if b not in SPECTRAL_BANDS]
+    if missing:
+        raise ValueError(f"Requested bands not defined in SPECTRAL_BANDS: {missing}")
     
-    for band_name, (l_freq, h_freq) in SPECTRAL_BANDS.items():
+    for band_name in requested_bands:
+        l_freq, h_freq = SPECTRAL_BANDS[band_name]
         raw_copy = raw.copy()
         # Exclude specified auxiliary channels before further processing
         exclude = params.get('exclude_channels', [])
@@ -164,7 +171,8 @@ def preprocess_eeg_by_bands(raw, **kwargs):
                         raw_copy.pick(raw_copy.ch_names[:params['n_channels']])
         raw_copy.filter(l_freq=l_freq, h_freq=h_freq, fir_design='firwin', verbose=False)
         
-        subsample_factor = BAND_CONFIGS.get(band_name, {}).get('subsample_factor', params.get('subsample_factor_spectral', 2))
+        subsample_source = BAND_CONFIGS.get(band_name, {}).get('subsample_factor', params.get('subsample_factor_spectral', 2))
+        subsample_factor = float(subsample_source if subsample_source is not None else 1.0)
         if subsample_factor > 1:
             raw_copy.resample(raw_copy.info['sfreq'] / subsample_factor, verbose=False)
             
@@ -177,8 +185,15 @@ def preprocess_eeg_by_bands(raw, **kwargs):
             epochs_data[i] = (epoch - mean) / std
             
         band_data[band_name] = epochs_data
-        
-    return band_data, raw_copy.ch_names
+
+        # Track channel names from the first processed band for return.
+        if not ch_names:
+            ch_names = list(raw_copy.ch_names)
+
+    if not ch_names:
+        raise ValueError("No bands were processed; check requested band list and raw data.")
+
+    return band_data, ch_names
 
 def plot_results(results_list, method_name, save_path=None, verbose=True):
     """
