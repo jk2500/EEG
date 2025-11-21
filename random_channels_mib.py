@@ -78,7 +78,13 @@ def _estimator_factory(name: str):
     raise ValueError(f"Unknown estimator: {name}. Choose from ['ksg', 'binning', 'gaussian'].")
 
 
-def _build_analyzer(estimator_name: str, n_channels: int, epoch_length: float, verbose: bool) -> ComplexityAnalyzer:
+def _build_analyzer(
+    estimator_name: str,
+    n_channels: int,
+    epoch_length: float,
+    verbose: bool,
+    n_jobs: Optional[int] = None,
+) -> ComplexityAnalyzer:
     EstimatorClass, method_params = _estimator_factory(estimator_name)
     params: Dict[str, Any] = {
         **ANALYSIS_PARAMS,
@@ -87,6 +93,8 @@ def _build_analyzer(estimator_name: str, n_channels: int, epoch_length: float, v
         "epoch_length": float(epoch_length),
         "verbose": verbose,
     }
+    if n_jobs is not None:
+        params["n_jobs"] = int(n_jobs)
     estimator = EstimatorClass(**params)
     return ComplexityAnalyzer(estimator=estimator, **params)
 
@@ -100,17 +108,26 @@ def _select_channel_indices(
     if n_channels > len(all_channel_names):
         raise ValueError(f"Requested {n_channels} channels but only {len(all_channel_names)} available.")
 
+    selected: List[str] = []
     if preferred:
-        present = [ch for ch in preferred if ch in all_channel_names]
-        if len(present) < n_channels:
-            raise ValueError(
-                f"Only {len(present)} of the requested channels are present; need {n_channels}. "
-                f"Available: {all_channel_names}"
-            )
-        selected = present[:n_channels]
+        seen = set()
+        for ch in preferred:
+            if ch in all_channel_names and ch not in seen:
+                selected.append(ch)
+                seen.add(ch)
+
+    if len(selected) < n_channels:
+        fallback = [ch for ch in all_channel_names if ch not in selected]
+        needed = n_channels - len(selected)
+        selected.extend(fallback[:needed])
     else:
-        # Fall back to the front of the file ordering for determinism
-        selected = list(all_channel_names[:n_channels])
+        selected = selected[:n_channels]
+
+    if len(selected) < n_channels:
+        raise ValueError(
+            f"Unable to select {n_channels} channels from the available list. "
+            f"Available: {all_channel_names}"
+        )
 
     indices = np.array([all_channel_names.index(ch) for ch in selected], dtype=int)
     return indices, selected
@@ -286,8 +303,9 @@ def run_random_channel_mib_broadband(
     fixed_channels: Optional[List[str]],
     output_dir: Path,
     verbose: bool,
+    n_jobs: Optional[int],
 ) -> Path:
-    analyzer = _build_analyzer(estimator_name, n_channels, epoch_length, verbose=False)
+    analyzer = _build_analyzer(estimator_name, n_channels, epoch_length, verbose=False, n_jobs=n_jobs)
     epochs_data, channel_names = _load_and_preprocess_full_eeg(
         vhdr_path,
         epoch_length=epoch_length,
@@ -352,8 +370,9 @@ def run_random_channel_mib_spectral(
     fixed_channels: Optional[List[str]],
     output_dir: Path,
     verbose: bool,
+    n_jobs: Optional[int],
 ) -> Path:
-    analyzer = _build_analyzer(estimator_name, n_channels, epoch_length, verbose=False)
+    analyzer = _build_analyzer(estimator_name, n_channels, epoch_length, verbose=False, n_jobs=n_jobs)
     log_print(f"Loading EEG and preparing spectral-band epochs from {vhdr_path.name}...", verbose)
     raw = mne.io.read_raw_brainvision(str(vhdr_path), preload=True, verbose=False)
     band_data, channel_names = preprocess_eeg_by_bands(
@@ -441,6 +460,8 @@ def run_dataset(
     mode: str,
     output_dir: Path,
     verbose: bool,
+    included_conditions: Optional[Iterable[str]] = None,
+    n_jobs: Optional[int] = None,
 ) -> List[Path]:
     generated_files: List[Path] = []
     subject_map = _iter_subjects(dataset_dir, subjects, verbose)
@@ -452,6 +473,8 @@ def run_dataset(
     if mode not in mode_options:
         raise ValueError(f"mode must be one of {mode_options}")
 
+    allowed_conditions = {c.strip() for c in included_conditions} if included_conditions else None
+
     for epoch_length in epoch_lengths:
         for estimator in estimators:
             log_print(
@@ -460,7 +483,15 @@ def run_dataset(
                 verbose,
             )
             for subject_id, cond_map in subject_map.items():
-                for condition, vhdr_path in sorted(cond_map.items()):
+                filtered_cond_map = (
+                    {cond: path for cond, path in cond_map.items() if cond in allowed_conditions}
+                    if allowed_conditions
+                    else cond_map
+                )
+                if not filtered_cond_map:
+                    continue
+
+                for condition, vhdr_path in sorted(filtered_cond_map.items()):
                     condition_dir = _compose_output_dir(
                         output_dir,
                         "broadband" if mode == "both" else mode,
@@ -481,6 +512,7 @@ def run_dataset(
                                 fixed_channels=fixed_channels,
                                 output_dir=condition_dir,
                                 verbose=verbose,
+                                n_jobs=n_jobs,
                             )
                         )
                     if mode in ("spectral", "both"):
@@ -505,6 +537,7 @@ def run_dataset(
                                 fixed_channels=fixed_channels,
                                 output_dir=spectral_dir,
                                 verbose=verbose,
+                                n_jobs=n_jobs,
                             )
                         )
     return generated_files
@@ -531,6 +564,12 @@ def _parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Run on a single BrainVision .vhdr file instead of sweeping subjects.",
+    )
+    parser.add_argument(
+        "--two-sample",
+        nargs=2,
+        metavar=("SUBJECT_A", "SUBJECT_B"),
+        help="Run a fixed two-subject sweep (eyes-closed, eyes-open, sedation_1 conditions).",
     )
     parser.add_argument(
         "--subjects",
@@ -563,6 +602,12 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=50,
         help="Number of random channel subsets to evaluate per combination.",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=int(ANALYSIS_PARAMS.get("n_jobs", -1)),
+        help="Number of parallel jobs for epoch evaluation (-1 for all cores).",
     )
     parser.add_argument(
         "--rng-seed",
@@ -621,6 +666,7 @@ def cli_main() -> None:
                         fixed_channels=fixed_channels,
                         output_dir=base_dir,
                         verbose=verbose,
+                        n_jobs=int(args.jobs),
                     )
                 if args.mode in ("spectral", "both"):
                     spectral_dir = output_dir / "spectral" / estimator
@@ -634,12 +680,20 @@ def cli_main() -> None:
                         fixed_channels=fixed_channels,
                         output_dir=spectral_dir,
                         verbose=verbose,
+                        n_jobs=int(args.jobs),
                     )
         return
 
+    two_sample_conditions = ["awake_eyes_closed", "awake_eyes_open", "sedation_1"]
+    subject_list: Optional[List[str]] = args.subjects
+    included_conditions: Optional[List[str]] = None
+    if args.two_sample:
+        subject_list = list(args.two_sample)
+        included_conditions = two_sample_conditions
+
     generated = run_dataset(
         dataset_dir=Path(args.dataset),
-        subjects=args.subjects,
+        subjects=subject_list,
         epoch_lengths=[float(e) for e in args.epoch_lengths],
         estimators=[str(e) for e in args.estimators],
         repeats=int(args.repeats),
@@ -649,6 +703,8 @@ def cli_main() -> None:
         mode=args.mode,
         output_dir=output_dir,
         verbose=verbose,
+        included_conditions=included_conditions,
+        n_jobs=int(args.jobs),
     )
     if verbose:
         log_print(f"\nGenerated {len(generated)} result files.", True)
