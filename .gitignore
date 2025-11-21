@@ -59,8 +59,7 @@ Thumbs.db
 *.log
 
 # Results (optional - comment out if you want to track results)
-# results/plots/*.png
-# results/data/*.csv
+results/
 
 # Backup files
 *_backup.py

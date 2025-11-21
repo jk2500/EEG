@@ -28,7 +28,9 @@ ANALYSIS_PARAMS = {
     'channels_list': ['Fp1', 'Fp2', 'F3', 'F4', 'P3', 'P4', 'T7', 'T8'],
     # Reference all EEG channels to the right earlobe (A2) by default
     'reference_channel': 'A2',
-    'target_sfreq': 500.0         # Target sampling frequency for consistency
+    'target_sfreq': 500.0,        # Target sampling frequency for consistency
+    # Channels to exclude from analysis (non-EEG aux channels)
+    'exclude_channels': ['VEOG', 'HEOG', 'EMG'],
 }
 
 # ============================================================================

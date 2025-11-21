@@ -60,6 +60,13 @@ def preprocess_eeg(raw, **kwargs):
     params = {**ANALYSIS_PARAMS, **kwargs}
     raw_copy = raw.copy()
     
+    # Exclude specified auxiliary channels (e.g., VEOG/HEOG/EMG) if present
+    exclude = params.get('exclude_channels', [])
+    if exclude:
+        to_drop = [ch for ch in exclude if ch in raw_copy.ch_names]
+        if len(to_drop) > 0:
+            raw_copy.drop_channels(to_drop)
+    
     if raw_copy.info['sfreq'] != params['target_sfreq']:
         raw_copy.resample(params['target_sfreq'], verbose=False)
     
@@ -111,10 +118,17 @@ def preprocess_eeg_by_bands(raw, **kwargs):
     Preprocess EEG data by spectral bands.
     """
     params = {**ANALYSIS_PARAMS, **kwargs}
+    use_all_channels = params.get('use_all_channels', False)
     band_data = {}
     
     for band_name, (l_freq, h_freq) in SPECTRAL_BANDS.items():
         raw_copy = raw.copy()
+        # Exclude specified auxiliary channels before further processing
+        exclude = params.get('exclude_channels', [])
+        if exclude:
+            to_drop = [ch for ch in exclude if ch in raw_copy.ch_names]
+            if len(to_drop) > 0:
+                raw_copy.drop_channels(to_drop)
         if raw_copy.info['sfreq'] != params['target_sfreq']:
             raw_copy.resample(params['target_sfreq'], verbose=False)
             
@@ -130,20 +144,24 @@ def preprocess_eeg_by_bands(raw, **kwargs):
 
         # Deterministic channel selection: prefer named list
         eeg_channels = mne.pick_types(raw_copy.info, eeg=True)
-        selection_mode = params.get('channel_selection', 'named')
-        if selection_mode == 'named' and 'channels_list' in params:
-            desired = [ch for ch in params['channels_list'] if ch in raw_copy.ch_names]
-            if len(desired) >= params['n_channels']:
-                raw_copy.pick(desired[:params['n_channels']])
-            else:
-                raw_copy.pick(raw_copy.ch_names[:params['n_channels']])
+        if use_all_channels:
+            # Keep all EEG channels (minus excluded), no limiting by n_channels
+            raw_copy.pick([raw_copy.ch_names[i] for i in eeg_channels])
         else:
-            if len(eeg_channels) > params['n_channels']:
-                if selection_mode == 'random':
-                    indices = np.random.choice(eeg_channels, params['n_channels'], replace=False)
-                    raw_copy.pick([raw_copy.ch_names[i] for i in indices])
+            selection_mode = params.get('channel_selection', 'named')
+            if selection_mode == 'named' and 'channels_list' in params:
+                desired = [ch for ch in params['channels_list'] if ch in raw_copy.ch_names]
+                if len(desired) >= params['n_channels']:
+                    raw_copy.pick(desired[:params['n_channels']])
                 else:
                     raw_copy.pick(raw_copy.ch_names[:params['n_channels']])
+            else:
+                if len(eeg_channels) > params['n_channels']:
+                    if selection_mode == 'random':
+                        indices = np.random.choice(eeg_channels, params['n_channels'], replace=False)
+                        raw_copy.pick([raw_copy.ch_names[i] for i in indices])
+                    else:
+                        raw_copy.pick(raw_copy.ch_names[:params['n_channels']])
         raw_copy.filter(l_freq=l_freq, h_freq=h_freq, fir_design='firwin', verbose=False)
         
         subsample_factor = BAND_CONFIGS.get(band_name, {}).get('subsample_factor', params.get('subsample_factor_spectral', 2))
