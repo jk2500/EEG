@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from eeg_analysis.eeg_utils import generate_bipartitions, EEGDataCache
+from eeg_analysis.eeg_utils import generate_bipartitions, EEGDataCache, check_gaussianity
 
 
 def test_generate_bipartitions_full_count():
@@ -44,3 +44,26 @@ def test_eeg_data_cache_reuses_and_evicts(monkeypatch):
     # file_a should have been evicted because max_cache_size == 1
     cache.get_raw_data("file_a.vhdr", verbose=False)
     assert calls == ["file_a.vhdr", "file_b.vhdr", "file_a.vhdr"]
+
+
+def test_check_gaussianity_detects_normal_vs_uniform():
+    rng = np.random.default_rng(0)
+    normal = rng.normal(size=1000)
+    uniform = rng.uniform(size=1000)
+
+    assert check_gaussianity(normal, verbose=False) is True
+    assert check_gaussianity(uniform, verbose=False) is False
+
+
+def test_check_gaussianity_multi_channel_returns_p_values():
+    rng = np.random.default_rng(0)
+    normal = rng.normal(size=1000)
+    uniform = rng.uniform(size=1000)
+    signals = np.vstack([normal, uniform])
+
+    is_gaussian, p_values = check_gaussianity(signals, return_p_values=True, verbose=False)
+
+    assert is_gaussian is False
+    assert p_values.shape == (2,)
+    assert p_values[0] > 0.05
+    assert p_values[1] < 0.05

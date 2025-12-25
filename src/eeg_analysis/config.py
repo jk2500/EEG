@@ -37,30 +37,41 @@ ANALYSIS_PARAMS = {
 # 🔬 METHOD-SPECIFIC PARAMETERS
 # ============================================================================
 
-KSG_PARAMS = {
-    'k': 6,                       # Number of nearest neighbors for KSG
-}
-
 BINNING_PARAMS = {
     'n_bins': 10,                 # Number of bins for histogram discretization
-}
-
-GAUSSIAN_PARAMS = {
-    'alpha': 0.05,                # Significance level for Gaussianity test
 }
 
 # ============================================================================
 # 📁 FILE PATHS & DIRECTORIES
 # ============================================================================
 
-# Default dataset directory
+# Default dataset directory (BIDS format - BrainVision files)
 DATASET_DIR = 'ds005620'
+
+# Secondary dataset directory (EEGLAB format - Sedation-RestingState)
+SEDATION_DATASET_DIR = 'Sedation-RestingState'
 
 # Default file paths for quick analysis
 DEFAULT_FILE_PATHS = {
     'awake': os.path.join(DATASET_DIR, 'sub-1010/eeg/sub-1010_task-awake_acq-EO_eeg.vhdr'),
     'sedation': os.path.join(DATASET_DIR, 'sub-1010/eeg/sub-1010_task-sed2_acq-rest_run-1_eeg.vhdr')
 }
+
+# Sedation-RestingState condition mapping
+SEDATION_CONDITIONS = {
+    1: 'baseline',
+    2: 'light_sedation',
+    3: 'deep_sedation',
+    4: 'recovery',
+}
+
+# Common 10-20 channels available in the Sedation-RestingState dataset
+# (subset that overlaps with standard 10-20 system)
+SEDATION_COMMON_CHANNELS = [
+    'Fp1', 'Fp2', 'F3', 'F4', 'F7', 'F8', 'Fz',
+    'C3', 'C4', 'Cz', 'T3', 'T4', 'T5', 'T6',
+    'P3', 'P4', 'Pz', 'O1', 'O2', 'Oz'
+]
 
 # Default output directory
 DEFAULT_OUTPUT_DIR = 'results'

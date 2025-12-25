@@ -61,6 +61,39 @@ Thumbs.db
 # Results (optional - comment out if you want to track results)
 results/
 
+# Data files
+*.csv
+*.json
+*.mat
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.parquet
+*.feather
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.tif
+*.svg
+*.pdf
+*.eps
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
 # Backup files
 *_backup.py
 main_backup.py

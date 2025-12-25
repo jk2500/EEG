@@ -9,7 +9,7 @@ Reads the JSON files produced by `random_channels_mib.py` and reports:
 - Cross-subject differences for two-subject sweeps when available.
 
 Example:
-    python analyze_mib_results.py --root results/mib_random_channels --mode broadband --estimator ksg --cv-threshold 0.15 --delta-threshold 0.05
+    python scripts/analyze_mib_results.py --root results/ds005620/mib_random_channels --mode broadband --estimator ksg --cv-threshold 0.15 --delta-threshold 0.05
 """
 
 from __future__ import annotations
@@ -37,10 +37,10 @@ def _infer_condition(vhdr_path: str) -> str:
         return "awake_eyes_open"
     if "task-awake" in name and "acq-ec" in name:
         return "awake_eyes_closed"
-    if "task-sed" in name and "acq-rest" in name:
-        return "sedation_1"
     if "task-sed2" in name and "acq-rest" in name:
         return "sedation_2"
+    if "task-sed" in name and "acq-rest" in name:
+        return "sedation_1"
     return "unknown"
 
 
@@ -202,7 +202,12 @@ def _summarize(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Summarize random-channel MIB JSON outputs.")
-    parser.add_argument("--root", type=str, default="results/mib_random_channels", help="Root directory containing JSON outputs.")
+    parser.add_argument(
+        "--root",
+        type=str,
+        default="results/ds005620/mib_random_channels",
+        help="Root directory containing JSON outputs.",
+    )
     parser.add_argument("--mode", choices=["broadband", "spectral"], default="broadband", help="Which output mode to summarize.")
     parser.add_argument("--estimator", type=str, default=None, help="Optional estimator filter (e.g., ksg).")
     parser.add_argument("--epoch-length", type=float, default=None, help="Optional epoch length filter (seconds).")

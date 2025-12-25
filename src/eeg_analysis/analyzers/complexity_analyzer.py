@@ -20,18 +20,23 @@ from tqdm import tqdm
 import warnings
 
 # Local imports
-from ..eeg_utils import (
+from ..core import (
     preprocess_eeg,
     preprocess_eeg_by_bands,
     generate_bipartitions,
-    _extract_condition,
+    EEGDataCache,
+)
+from ..loaders import extract_condition
+from ..visualization import (
     plot_results,
     plot_spectral_complexity_results,
     print_spectral_summary,
-    log_print,
-    EEGDataCache
 )
+from ..utils import log_print
 from ..config import ANALYSIS_PARAMS, UI_PARAMS
+
+# Backward compatibility alias
+_extract_condition = extract_condition
 
 warnings.filterwarnings('ignore')
 mne.set_log_level('WARNING')
@@ -105,14 +110,14 @@ class ComplexityAnalyzer:
     def _calculate_metric_for_epoch(self, data, partitions=None, **kwargs):
         """
         Calculate the Minimum Information Bipartition (MIB) for a single epoch.
-        
+
         Parameters:
         -----------
         data : np.ndarray
             The data for a single epoch, shape (n_channels, n_samples).
         **kwargs : dict
             Additional parameters (not used here but kept for compatibility).
-            
+
         Returns:
         --------
         float or None
@@ -123,11 +128,11 @@ class ComplexityAnalyzer:
 
         integration_values = [self.estimator.calculate_integration(data, p) for p in partitions]
         integration_values = [v for v in integration_values if v is not None and np.isfinite(v)]
-        
+
         if not integration_values:
             return None
-                
-        return np.min(integration_values)
+
+        return min(integration_values)
 
     def analyze_eeg_file(self, file_path):
         """

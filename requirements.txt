@@ -11,6 +11,8 @@ mne
 mne-bids
 pyedflib
 pywavelets
+pymatreader
+h5py
 
 # CLI and utilities
 tqdm
