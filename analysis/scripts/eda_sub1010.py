@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Raw EEG exploratory analysis for a single subject.
+
+Usage:
+    python analysis/scripts/eda_sub1010.py                           # Default: sub-1010
+    python analysis/scripts/eda_sub1010.py --subject sub-1019
+    python analysis/scripts/eda_sub1010.py --subject sub-1010 --dataset /path/to/ds005620
+"""
+
+import argparse
 import json
 import os
 import re
@@ -16,9 +25,11 @@ from scipy.stats import kurtosis
 import matplotlib.pyplot as plt
 
 
-RUN_RE = re.compile(
-    r"sub-1010_task-(?P<task>[^_]+)_acq-(?P<acq>[^_]+)(?:_run-(?P<run>\d+))?_eeg.vhdr"
-)
+def make_run_pattern(subject: str) -> re.Pattern:
+    """Create regex pattern for the subject's BrainVision files."""
+    return re.compile(
+        rf"{subject}_task-(?P<task>[^_]+)_acq-(?P<acq>[^_]+)(?:_run-(?P<run>\d+))?_eeg\.vhdr"
+    )
 
 BANDS = {
     "delta": (1.0, 4.0),
@@ -35,8 +46,8 @@ SAMPLE_CAP = 200_000
 RNG = np.random.default_rng(7)
 
 
-def parse_run_info(path: Path) -> dict:
-    match = RUN_RE.match(path.name)
+def parse_run_info(path: Path, pattern: re.Pattern) -> dict:
+    match = pattern.match(path.name)
     if not match:
         raise ValueError(f"Unrecognized filename: {path.name}")
     task = match.group("task")
@@ -72,8 +83,8 @@ def summarize_events(events_path: Path) -> dict:
     return {"n_events": len(df), "event_types": type_counts}
 
 
-def compute_run_stats(vhdr_path: Path) -> tuple[dict, pd.DataFrame, dict, tuple[np.ndarray, np.ndarray]]:
-    run_info = parse_run_info(vhdr_path)
+def compute_run_stats(vhdr_path: Path, pattern: re.Pattern) -> tuple[dict, pd.DataFrame, dict, tuple[np.ndarray, np.ndarray]]:
+    run_info = parse_run_info(vhdr_path, pattern)
     eeg_json = vhdr_path.with_suffix(".json")
     channels_path = vhdr_path.with_name(vhdr_path.name.replace("_eeg.vhdr", "_channels.tsv"))
     events_path = vhdr_path.with_name(vhdr_path.name.replace("_eeg.vhdr", "_events.tsv"))
@@ -226,14 +237,16 @@ def compute_run_stats(vhdr_path: Path) -> tuple[dict, pd.DataFrame, dict, tuple[
     return summary, channel_stats, bandpower | rel_bandpower, (freqs, psd_avg)
 
 
-def main() -> None:
-    eeg_dir = Path("datasets/ds005620/sub-1010/eeg")
-    out_dir = Path("analysis/outputs/ds005620/sub1010")
+def run_eda(subject: str, dataset_dir: Path) -> None:
+    """Run EDA for the specified subject."""
+    eeg_dir = dataset_dir / subject / "eeg"
+    out_dir = Path(f"analysis/outputs/ds005620/{subject}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    vhdr_paths = sorted(eeg_dir.glob("sub-1010*_eeg.vhdr"))
+    pattern = make_run_pattern(subject)
+    vhdr_paths = sorted(eeg_dir.glob(f"{subject}*_eeg.vhdr"))
     if not vhdr_paths:
-        raise SystemExit("No BrainVision files found for sub-1010.")
+        raise SystemExit(f"No BrainVision files found for {subject} in {eeg_dir}")
 
     summaries = []
     channel_stats_list = []
@@ -243,7 +256,7 @@ def main() -> None:
     psd_freqs = None
 
     for vhdr_path in vhdr_paths:
-        summary, channel_stats, bandpower, psd = compute_run_stats(vhdr_path)
+        summary, channel_stats, bandpower, psd = compute_run_stats(vhdr_path, pattern)
         summaries.append(summary)
         channel_stats_list.append(channel_stats)
 
@@ -263,26 +276,26 @@ def main() -> None:
             condition_counts[condition] += 1
 
     run_summary_df = pd.DataFrame(summaries).sort_values("run_id")
-    run_summary_df.to_csv(out_dir / "sub1010_run_summary.csv", index=False)
+    run_summary_df.to_csv(out_dir / "run_summary.csv", index=False)
 
     channel_stats_df = pd.concat(channel_stats_list, ignore_index=True)
-    channel_stats_df.to_csv(out_dir / "sub1010_channel_stats.csv", index=False)
+    channel_stats_df.to_csv(out_dir / "channel_stats.csv", index=False)
 
     bandpower_df = pd.DataFrame(bandpower_rows)
-    bandpower_df.to_csv(out_dir / "sub1010_bandpower.csv", index=False)
+    bandpower_df.to_csv(out_dir / "bandpower.csv", index=False)
 
     condition_summary = bandpower_df.groupby("condition").mean(numeric_only=True).reset_index()
-    condition_summary.to_csv(out_dir / "sub1010_condition_bandpower.csv", index=False)
+    condition_summary.to_csv(out_dir / "condition_bandpower.csv", index=False)
 
     channel_std = (
         channel_stats_df.groupby("channel")["std_uV"].mean().sort_values(ascending=False).head(12)
     )
     plt.figure(figsize=(10, 5))
     channel_std.plot(kind="bar")
-    plt.title("Top Channels by Mean Std (uV) - sub-1010")
+    plt.title(f"Top Channels by Mean Std (uV) - {subject}")
     plt.ylabel("Std (uV)")
     plt.tight_layout()
-    plt.savefig(out_dir / "sub1010_top_channel_std.png", dpi=150)
+    plt.savefig(out_dir / "top_channel_std.png", dpi=150)
     plt.close()
 
     if psd_by_condition and psd_freqs is not None:
@@ -295,12 +308,12 @@ def main() -> None:
                 10 * np.log10(psd_avg[freq_mask]),
                 label=condition,
             )
-        plt.title("Average PSD by Condition (1-45 Hz)")
+        plt.title(f"{subject}: Average PSD by Condition (1-45 Hz)")
         plt.xlabel("Frequency (Hz)")
         plt.ylabel("Power (dB uV^2/Hz)")
         plt.legend()
         plt.tight_layout()
-        plt.savefig(out_dir / "sub1010_psd_by_condition.png", dpi=150)
+        plt.savefig(out_dir / "psd_by_condition.png", dpi=150)
         plt.close()
 
     rel_cols = [col for col in condition_summary.columns if col.startswith("rel_")]
@@ -308,11 +321,33 @@ def main() -> None:
         plt.figure(figsize=(10, 6))
         bar_df = condition_summary.set_index("condition")[rel_cols]
         bar_df.plot(kind="bar")
-        plt.title("Relative Bandpower by Condition")
+        plt.title(f"{subject}: Relative Bandpower by Condition")
         plt.ylabel("Relative Power")
         plt.tight_layout()
-        plt.savefig(out_dir / "sub1010_relative_bandpower.png", dpi=150)
+        plt.savefig(out_dir / "relative_bandpower.png", dpi=150)
         plt.close()
+
+    print(f"EDA complete for {subject}. Results saved to {out_dir}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Run raw EEG exploratory analysis for a single subject."
+    )
+    parser.add_argument(
+        "--subject",
+        type=str,
+        default="sub-1010",
+        help="Subject ID (default: sub-1010)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="datasets/ds005620",
+        help="Path to the dataset directory (default: datasets/ds005620)",
+    )
+    args = parser.parse_args()
+    run_eda(args.subject, Path(args.dataset))
 
 
 if __name__ == "__main__":

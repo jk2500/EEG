@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Central Configuration File for EEG Neural Complexity Analysis
-=============================================================
+Central Configuration - Edit defaults here or override via kwargs.
 
-This file centralizes all default parameters and settings for the project,
-making it easier to manage and configure different analysis methods.
+Key configs:
+- ANALYSIS_PARAMS: n_channels=8, epoch_length=5s, target_sfreq=500Hz
+- BINNING_PARAMS: n_bins=10 (increase to 50 for production)
+- SPECTRAL_BANDS: delta/theta/alpha/beta/gamma/broadband freq ranges
 """
 
 import os
@@ -47,6 +48,10 @@ BINNING_PARAMS = {
 
 # Default dataset directory (BIDS format - BrainVision files)
 DATASET_DIR = 'ds005620'
+DS005620_DATASET_DIR = DATASET_DIR  # Alias for mib_analysis.py
+
+# Common 10-20 channels for DS005620 (shared with ANALYSIS_PARAMS['channels_list'])
+DS005620_COMMON_CHANNELS = ['Fp1', 'Fp2', 'F3', 'F4', 'P3', 'P4', 'T7', 'T8']
 
 # Secondary dataset directory (EEGLAB format - Sedation-RestingState)
 SEDATION_DATASET_DIR = 'Sedation-RestingState'

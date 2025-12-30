@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from eeg_analysis.eeg_utils import generate_bipartitions, EEGDataCache, check_gaussianity
+from eeg_analysis.core import generate_bipartitions, EEGDataCache
+from eeg_analysis.utils import check_gaussianity
 
 
 def test_generate_bipartitions_full_count():
@@ -27,7 +28,7 @@ def test_eeg_data_cache_reuses_and_evicts(monkeypatch):
         return DummyRaw()
 
     monkeypatch.setattr(
-        "eeg_analysis.eeg_utils.mne.io.read_raw_brainvision",
+        "eeg_analysis.core.cache.mne.io.read_raw_brainvision",
         fake_reader,
     )
 

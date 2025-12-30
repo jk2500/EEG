@@ -5,12 +5,15 @@ Helper Functions
 Miscellaneous utility functions used across the project.
 """
 
+from __future__ import annotations
+
 import warnings
+
 import numpy as np
 from scipy.stats import normaltest
 
 
-def log_print(message, verbose=True):
+def log_print(message: str, verbose: bool = True) -> None:
     """
     Print a message if verbose mode is enabled.
 
@@ -25,7 +28,14 @@ def log_print(message, verbose=True):
         print(message)
 
 
-def check_gaussianity(signal, alpha=None, axis=-1, min_samples=8, verbose=True, return_p_values=False):
+def check_gaussianity(
+    signal: np.ndarray,
+    alpha: float | None = None,
+    axis: int = -1,
+    min_samples: int = 8,
+    verbose: bool = True,
+    return_p_values: bool = False,
+) -> bool | tuple[bool, np.ndarray]:
     """
     Check Gaussianity using D'Agostino-Pearson normality test.
 

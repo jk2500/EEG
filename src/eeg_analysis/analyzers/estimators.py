@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Mutual Information Estimators
-=============================
+Mutual Information Estimators (Numba-optimized)
+===============================================
 
-This file provides the binning estimator for estimating entropy and mutual
-information, which are the core components for calculating neural complexity
-and MIB.
+Binning-based MI estimation for MIB analysis. Uses histogram discretization
+to estimate entropy: H(X) = -sum(p * log2(p)).
 
-Optimized with Numba JIT compilation for performance.
+Integration (mutual info) for partition: I = H(A) + H(B) - H(A,B)
+MIB = min(I) across all bipartitions.
 """
 
 import numpy as np
@@ -177,10 +177,12 @@ def _calculate_integration_numba(data, subset1_indices, subset2_indices, n_bins)
 
 class BinningEstimator:
     """
-    Calculates Mutual Information using the binning (histogram) method.
+    Histogram-based MI estimator for MIB computation.
 
-    Optimized with Numba JIT compilation for ~3-5x speedup.
+    Key param: n_bins (default 10) - higher = more precision, more computation.
+    Typical: n_bins=50 for analysis, n_bins=10 for quick tests.
     """
+
     def __init__(self, **kwargs):
         self.params = {**BINNING_PARAMS, **kwargs}
         self.name = 'Binning'

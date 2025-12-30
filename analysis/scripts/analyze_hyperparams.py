@@ -6,22 +6,35 @@ Tests how these hyperparameters affect MIB estimates and whether
 the relative differences between conditions are preserved.
 """
 
+from __future__ import annotations
+
 import sys
-from pathlib import Path
-import numpy as np
-import mne
 import time
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+import mne
+import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SRC_DIR = REPO_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+# Add src to path for imports if package not installed
+# After running `pip install -e .` from repo root, this is unnecessary
+try:
+    from eeg_analysis.config import ANALYSIS_PARAMS, BINNING_PARAMS, SPECTRAL_BANDS
+except ImportError:
+    REPO_ROOT = Path(__file__).resolve().parents[2]
+    SRC_DIR = REPO_ROOT / "src"
+    if str(SRC_DIR) not in sys.path:
+        sys.path.insert(0, str(SRC_DIR))
+    from eeg_analysis.config import ANALYSIS_PARAMS, BINNING_PARAMS, SPECTRAL_BANDS
 
-from eeg_analysis.config import ANALYSIS_PARAMS, BINNING_PARAMS, SPECTRAL_BANDS
 from eeg_analysis.analyzers.complexity_analyzer import ComplexityAnalyzer
 from eeg_analysis.analyzers.estimators import BinningEstimator
-from eeg_analysis.eeg_utils import preprocess_eeg, preprocess_eeg_by_bands, EEGDataCache, generate_bipartitions
+from eeg_analysis.core import (
+    EEGDataCache,
+    generate_bipartitions,
+    preprocess_eeg,
+    preprocess_eeg_by_bands,
+)
 
 mne.set_log_level("WARNING")
 
@@ -457,23 +470,72 @@ def print_summary(all_results: dict, param_name: str):
                       f"{r['cv_mib']:>6.3f} | {r['n_epochs']:>8}")
 
 
-if __name__ == "__main__":
-    # Files to compare
-    test_files = {
-        'Awake EO': "/home/rk/Desktop/projects/EEG/ds005620/sub-1067/eeg/sub-1067_task-awake_acq-EO_eeg.vhdr",
-        'Awake EC': "/home/rk/Desktop/projects/EEG/ds005620/sub-1067/eeg/sub-1067_task-awake_acq-EC_eeg.vhdr",
-        'Sedation': "/home/rk/Desktop/projects/EEG/ds005620/sub-1067/eeg/sub-1067_task-sed_acq-rest_run-1_eeg.vhdr",
+def build_test_files(dataset_dir: Path, subject: str) -> dict:
+    """Build test file paths for a subject."""
+    eeg_dir = dataset_dir / subject / "eeg"
+    return {
+        'Awake EO': str(eeg_dir / f"{subject}_task-awake_acq-EO_eeg.vhdr"),
+        'Awake EC': str(eeg_dir / f"{subject}_task-awake_acq-EC_eeg.vhdr"),
+        'Sedation': str(eeg_dir / f"{subject}_task-sed_acq-rest_run-1_eeg.vhdr"),
     }
 
-    output_dir = Path("/home/rk/Desktop/projects/EEG/results")
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Analyze effect of hyperparameters on MIB."
+    )
+    parser.add_argument(
+        "--subject",
+        type=str,
+        default="sub-1067",
+        help="Subject ID for test files (default: sub-1067)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="ds005620",
+        help="Path to dataset directory (default: ds005620)",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="results",
+        help="Output directory for plots (default: results)",
+    )
+    parser.add_argument(
+        "--test",
+        choices=["channels", "epochs", "both"],
+        default="both",
+        help="Which test to run (default: both)",
+    )
+    args = parser.parse_args()
+
+    test_files = build_test_files(Path(args.dataset), args.subject)
+    output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Test 1: Number of channels - ALPHA BAND (10s epochs)
-    print("\n" + "#"*70)
-    print("# TEST: NUMBER OF CHANNELS - ALPHA BAND")
-    print("#"*70)
+    if args.test in ("channels", "both"):
+        print("\n" + "#"*70)
+        print("# TEST: NUMBER OF CHANNELS - BROADBAND")
+        print("#"*70)
 
-    channel_counts = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
-    channel_results = test_channel_count(test_files, channel_counts, epoch_length=10.0, band='alpha')
-    print_summary(channel_results, "Channel Count (Alpha)")
-    plot_channel_count_results(channel_results, save_path=str(output_dir / "channel_count_effect_alpha.png"))
+        channel_counts = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
+        channel_results = test_channel_count(test_files, channel_counts, epoch_length=10.0, band=None)
+        print_summary(channel_results, "Channel Count (Broadband)")
+        plot_channel_count_results(channel_results, save_path=str(output_dir / "channel_count_effect.png"))
+
+    if args.test in ("epochs", "both"):
+        print("\n" + "#"*70)
+        print("# TEST: EPOCH LENGTH - BROADBAND")
+        print("#"*70)
+
+        epoch_lengths = [2.0, 5.0, 10.0, 15.0, 20.0]
+        epoch_results = test_epoch_length(test_files, epoch_lengths, n_channels=8)
+        print_summary(epoch_results, "Epoch Length")
+        plot_epoch_length_results(epoch_results, save_path=str(output_dir / "epoch_length_effect.png"))
+
+
+if __name__ == "__main__":
+    main()

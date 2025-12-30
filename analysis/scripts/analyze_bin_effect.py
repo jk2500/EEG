@@ -6,23 +6,31 @@ This script runs MIB analysis with varying numbers of histogram bins
 to understand how discretization affects the mutual information estimates.
 """
 
+from __future__ import annotations
+
 import sys
-from pathlib import Path
-import numpy as np
-import mne
 import time
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+import mne
+import numpy as np
 from scipy import linalg, stats
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SRC_DIR = REPO_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+# Add src to path for imports if package not installed
+# After running `pip install -e .` from repo root, this is unnecessary
+try:
+    from eeg_analysis.config import ANALYSIS_PARAMS
+except ImportError:
+    REPO_ROOT = Path(__file__).resolve().parents[2]
+    SRC_DIR = REPO_ROOT / "src"
+    if str(SRC_DIR) not in sys.path:
+        sys.path.insert(0, str(SRC_DIR))
+    from eeg_analysis.config import ANALYSIS_PARAMS
 
-from eeg_analysis.config import ANALYSIS_PARAMS
 from eeg_analysis.analyzers.complexity_analyzer import ComplexityAnalyzer
 from eeg_analysis.analyzers.estimators import BinningEstimator
-from eeg_analysis.eeg_utils import preprocess_eeg, EEGDataCache, generate_bipartitions
+from eeg_analysis.core import EEGDataCache, generate_bipartitions, preprocess_eeg
 
 mne.set_log_level("WARNING")
 
@@ -709,23 +717,60 @@ def run_gaussianity_analysis(test_files: dict, n_channels: int = 8):
     return all_gauss_results, all_epochs
 
 
-if __name__ == "__main__":
-    import sys
-
-    # Files to compare
-    test_files = {
-        'Awake EO': "/home/rk/Desktop/projects/EEG/ds005620/sub-1067/eeg/sub-1067_task-awake_acq-EO_eeg.vhdr",
-        'Awake EC': "/home/rk/Desktop/projects/EEG/ds005620/sub-1067/eeg/sub-1067_task-awake_acq-EC_eeg.vhdr",
-        'Sedation': "/home/rk/Desktop/projects/EEG/ds005620/sub-1067/eeg/sub-1067_task-sed_acq-rest_run-1_eeg.vhdr",
+def build_test_files(dataset_dir: Path, subject: str) -> dict:
+    """Build test file paths for a subject."""
+    eeg_dir = dataset_dir / subject / "eeg"
+    return {
+        'Awake EO': str(eeg_dir / f"{subject}_task-awake_acq-EO_eeg.vhdr"),
+        'Awake EC': str(eeg_dir / f"{subject}_task-awake_acq-EC_eeg.vhdr"),
+        'Sedation': str(eeg_dir / f"{subject}_task-sed_acq-rest_run-1_eeg.vhdr"),
     }
 
-    output_dir = Path("/home/rk/Desktop/projects/EEG/results")
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Analyze effect of bin count on MIB estimates."
+    )
+    parser.add_argument(
+        "--subject",
+        type=str,
+        default="sub-1067",
+        help="Subject ID for test files (default: sub-1067)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="ds005620",
+        help="Path to dataset directory (default: ds005620)",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="results",
+        help="Output directory for plots (default: results)",
+    )
+    parser.add_argument(
+        "--gaussianity",
+        action="store_true",
+        help="Run only Gaussianity analysis",
+    )
+    parser.add_argument(
+        "--n-channels",
+        type=int,
+        default=8,
+        help="Number of channels to use (default: 8)",
+    )
+    args = parser.parse_args()
+
+    test_files = build_test_files(Path(args.dataset), args.subject)
+    output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if we should run only Gaussianity test
-    if len(sys.argv) > 1 and sys.argv[1] == '--gaussianity':
+    if args.gaussianity:
         print("Running Gaussianity analysis only...")
-        all_gauss_results, all_epochs = run_gaussianity_analysis(test_files, n_channels=8)
+        all_gauss_results, all_epochs = run_gaussianity_analysis(test_files, n_channels=args.n_channels)
         print_gaussianity_summary(all_gauss_results)
         plot_gaussianity_comparison(all_gauss_results, all_epochs,
                                     save_path=str(output_dir / "gaussianity_comparison.png"))
@@ -739,7 +784,7 @@ if __name__ == "__main__":
             print(f"\n{'#'*70}")
             print(f"# CONDITION: {cond_name}")
             print(f"{'#'*70}")
-            results, gaussian_baseline = analyze_bin_effect(file_path, bin_counts, n_channels=8)
+            results, gaussian_baseline = analyze_bin_effect(file_path, bin_counts, n_channels=args.n_channels)
             all_results[cond_name] = (results, gaussian_baseline)
 
         # Print multi-condition summary
@@ -747,3 +792,7 @@ if __name__ == "__main__":
 
         # Save multi-condition plot
         plot_multi_condition_results(all_results, save_path=str(output_dir / "bin_count_effect_multi.png"))
+
+
+if __name__ == "__main__":
+    main()

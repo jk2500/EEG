@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""Detailed EDA for subject MIB results.
+
+Supports different subjects and epoch lengths via CLI arguments.
+
+Usage:
+    python analysis/scripts/eda_sub1010_results.py                    # Default: sub-1010, 5s
+    python analysis/scripts/eda_sub1010_results.py --subject sub-1010 --epoch 10
+    python analysis/scripts/eda_sub1010_results.py --subject sub-1019 --epoch 5
+"""
+
+import argparse
 import itertools
 import json
 from collections import Counter
@@ -7,13 +18,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.stats import mannwhitneyu, ttest_ind, t
+from scipy.stats import mannwhitneyu, ttest_ind
 
-
-RESULTS_DIR = Path(
-    "results/ds005620/mib_random_channels/spectral/binning/epoch-5p00s/sub-1010"
-)
-OUT_DIR = Path("analysis/outputs/ds005620/sub1010_results")
+from utils import mean_ci, cohen_d, fdr_bh, jaccard_mean, format_epoch_path
 
 
 def load_json(path: Path) -> dict:
@@ -21,56 +28,20 @@ def load_json(path: Path) -> dict:
         return json.load(handle)
 
 
-def mean_ci(values: np.ndarray, alpha: float = 0.05) -> tuple[float, float]:
-    if values.size < 2:
-        return (np.nan, np.nan)
-    mean = float(values.mean())
-    std = float(values.std(ddof=1))
-    half_width = t.ppf(1 - alpha / 2, df=values.size - 1) * std / np.sqrt(values.size)
-    return (mean - half_width, mean + half_width)
+def run_eda(subject: str, epoch_length: float) -> None:
+    """Run detailed EDA for the specified subject and epoch length."""
+    epoch_str = format_epoch_path(epoch_length)
 
+    results_dir = Path(
+        f"results/ds005620/mib_random_channels/spectral/binning/epoch-{epoch_str}/{subject}"
+    )
+    out_dir = Path(f"analysis/outputs/ds005620/{subject}_results_epoch{int(epoch_length)}")
 
-def cohen_d(a: np.ndarray, b: np.ndarray) -> float:
-    n1, n2 = a.size, b.size
-    if n1 < 2 or n2 < 2:
-        return np.nan
-    s1 = a.std(ddof=1)
-    s2 = b.std(ddof=1)
-    pooled = np.sqrt(((n1 - 1) * s1**2 + (n2 - 1) * s2**2) / (n1 + n2 - 2))
-    if pooled == 0:
-        return np.nan
-    return (a.mean() - b.mean()) / pooled
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-
-def fdr_bh(pvalues: np.ndarray) -> np.ndarray:
-    order = np.argsort(pvalues)
-    ranks = np.arange(1, len(pvalues) + 1)
-    p_sorted = pvalues[order]
-    adj_sorted = p_sorted * len(pvalues) / ranks
-    adj_sorted = np.minimum.accumulate(adj_sorted[::-1])[::-1]
-    adjusted = np.empty_like(pvalues, dtype=float)
-    adjusted[order] = adj_sorted
-    return np.clip(adjusted, 0.0, 1.0)
-
-
-def jaccard_mean(sets: list[set[str]]) -> float:
-    if len(sets) < 2:
-        return np.nan
-    total = 0.0
-    count = 0
-    for a, b in itertools.combinations(sets, 2):
-        denom = len(a | b)
-        total += len(a & b) / denom if denom else 0.0
-        count += 1
-    return total / count if count else np.nan
-
-
-def main() -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    json_paths = sorted(RESULTS_DIR.glob("*/mib_random_channels_spectral_binning_*.json"))
+    json_paths = sorted(results_dir.glob("*/mib_random_channels_spectral_binning_*.json"))
     if not json_paths:
-        raise SystemExit(f"No results found in {RESULTS_DIR}")
+        raise SystemExit(f"No results found in {results_dir}")
 
     summary_rows = []
     repeat_rows = []
@@ -203,22 +174,22 @@ def main() -> None:
             )
 
     summary_df = pd.DataFrame(summary_rows)
-    summary_df.to_csv(OUT_DIR / "sub1010_results_summary.csv", index=False)
+    summary_df.to_csv(out_dir / "results_summary.csv", index=False)
 
     repeat_df = pd.DataFrame(repeat_rows)
-    repeat_df.to_csv(OUT_DIR / "sub1010_repeat_means.csv", index=False)
+    repeat_df.to_csv(out_dir / "repeat_means.csv", index=False)
 
     epoch_df = pd.DataFrame(epoch_rows)
-    epoch_df.to_csv(OUT_DIR / "sub1010_epoch_distribution.csv", index=False)
+    epoch_df.to_csv(out_dir / "epoch_distribution.csv", index=False)
 
     stability_df = pd.DataFrame(stability_rows)
-    stability_df.to_csv(OUT_DIR / "sub1010_epoch_stability.csv", index=False)
+    stability_df.to_csv(out_dir / "epoch_stability.csv", index=False)
 
     selection_df = pd.DataFrame(selection_rows)
-    selection_df.to_csv(OUT_DIR / "sub1010_channel_selection_counts.csv", index=False)
+    selection_df.to_csv(out_dir / "channel_selection_counts.csv", index=False)
 
     jaccard_df = pd.DataFrame(jaccard_rows)
-    jaccard_df.to_csv(OUT_DIR / "sub1010_selection_jaccard.csv", index=False)
+    jaccard_df.to_csv(out_dir / "selection_jaccard.csv", index=False)
 
     comparisons = []
     for band in sorted(summary_df["band"].unique()):
@@ -249,7 +220,7 @@ def main() -> None:
     if not comp_df.empty:
         comp_df["t_pvalue_fdr"] = fdr_bh(comp_df["t_pvalue"].to_numpy())
         comp_df["mw_pvalue_fdr"] = fdr_bh(comp_df["mw_pvalue"].to_numpy())
-        comp_df.to_csv(OUT_DIR / "sub1010_condition_comparisons.csv", index=False)
+        comp_df.to_csv(out_dir / "condition_comparisons.csv", index=False)
 
     plt.style.use("seaborn-v0_8-whitegrid")
 
@@ -270,10 +241,10 @@ def main() -> None:
         ax.set_title(band)
         ax.set_ylabel("Mean MIB (per repeat)")
         ax.tick_params(axis="x", rotation=20)
-    for ax in axes[len(bands) :]:
+    for ax in axes[len(bands):]:
         ax.axis("off")
     plt.tight_layout()
-    plt.savefig(OUT_DIR / "sub1010_repeat_means_boxplot.png", dpi=150)
+    plt.savefig(out_dir / "repeat_means_boxplot.png", dpi=150)
     plt.close()
 
     # Mean MIB across bands by condition.
@@ -290,11 +261,11 @@ def main() -> None:
         )
         plt.bar(x + idx * width, vals, width=width, label=cond)
     plt.xticks(x + width * (len(conditions) - 1) / 2, bands)
-    plt.title("Mean MIB by Band and Condition (per-repeat means)")
+    plt.title(f"{subject}: Mean MIB by Band and Condition")
     plt.ylabel("Mean MIB")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(OUT_DIR / "sub1010_band_means.png", dpi=150)
+    plt.savefig(out_dir / "band_means.png", dpi=150)
     plt.close()
 
     # Variability of repeat means (CV).
@@ -309,11 +280,11 @@ def main() -> None:
         )
         plt.bar(x + idx * width, vals, width=width, label=cond)
     plt.xticks(x + width * (len(conditions) - 1) / 2, bands)
-    plt.title("CV of Per-Repeat Mean MIB by Band")
+    plt.title(f"{subject}: CV of Per-Repeat Mean MIB by Band")
     plt.ylabel("CV")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(OUT_DIR / "sub1010_repeat_mean_cv.png", dpi=150)
+    plt.savefig(out_dir / "repeat_mean_cv.png", dpi=150)
     plt.close()
 
     # Epoch stability summary.
@@ -327,12 +298,34 @@ def main() -> None:
         )
         plt.bar(x + idx * width, vals, width=width, label=cond)
     plt.xticks(x + width * (len(conditions) - 1) / 2, bands)
-    plt.title("Epoch Stability CV by Band")
+    plt.title(f"{subject}: Epoch Stability CV by Band")
     plt.ylabel("CV")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(OUT_DIR / "sub1010_epoch_stability_cv.png", dpi=150)
+    plt.savefig(out_dir / "epoch_stability_cv.png", dpi=150)
     plt.close()
+
+    print(f"EDA complete for {subject} (epoch {int(epoch_length)}s). Results saved to {out_dir}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Run detailed EDA on subject MIB results."
+    )
+    parser.add_argument(
+        "--subject",
+        type=str,
+        default="sub-1010",
+        help="Subject ID (default: sub-1010)",
+    )
+    parser.add_argument(
+        "--epoch",
+        type=float,
+        default=5.0,
+        help="Epoch length in seconds (default: 5.0)",
+    )
+    args = parser.parse_args()
+    run_eda(args.subject, args.epoch)
 
 
 if __name__ == "__main__":

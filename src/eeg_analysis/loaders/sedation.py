@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
 """
-Sedation-RestingState Dataset Loader
-====================================
+Sedation-RestingState Dataset Loader (EEGLAB/.set format)
+=========================================================
 
-This module provides utilities for loading and preprocessing EEG data from the
-Sedation-RestingState dataset (EEGLAB format .set/.fdt files).
+Propofol sedation study with 4 conditions per subject.
+Conditions: baseline -> light_sedation -> deep_sedation -> recovery
 
-Dataset Structure:
-- 20 subjects, 4 conditions each (80 recordings total)
-- Already epoched (10-second epochs)
-- 91 channels (high-density EGI/Geodesic system)
-- 250 Hz sampling rate
-- Conditions: 1=baseline, 2=light sedation, 3=deep sedation, 4=recovery
-
-The data is organized with a datainfo.mat file containing metadata about each
-recording including filename, condition label, and timing information.
+Key functions:
+- load_sedation_epochs(): Load .set -> MNE Epochs
+- preprocess_sedation_epochs(): Channel select, filter, normalize
+- preprocess_sedation_epochs_by_bands(): Per-band preprocessing
+- create_sedation_subject_file_map(): Discover files via datainfo.mat
 """
+
+from __future__ import annotations
 
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 import mne
 import numpy as np
 import scipy.io as sio
 
-from ..config import ANALYSIS_PARAMS, SPECTRAL_BANDS, BAND_CONFIGS
+from ..config import ANALYSIS_PARAMS, BAND_CONFIGS, SPECTRAL_BANDS
+
+if TYPE_CHECKING:
+    from mne import Epochs
 
 
 # Condition mapping: numeric labels to descriptive names
@@ -161,8 +162,8 @@ def create_sedation_subject_file_map(
 
 def load_sedation_epochs(
     set_file: str,
-    verbose: bool = False
-) -> Tuple[mne.Epochs, Dict[str, Any]]:
+    verbose: bool = False,
+) -> tuple[Epochs, dict[str, Any]]:
     """
     Load epoched EEG data from an EEGLAB .set file.
     

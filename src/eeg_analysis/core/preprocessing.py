@@ -5,52 +5,51 @@ EEG Preprocessing Functions
 Provides standardized preprocessing pipelines for EEG data using MNE.
 """
 
-import numpy as np
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 import mne
+import numpy as np
 
-from ..config import ANALYSIS_PARAMS, SPECTRAL_BANDS, BAND_CONFIGS
+from ..config import ANALYSIS_PARAMS, BAND_CONFIGS, SPECTRAL_BANDS
+
+if TYPE_CHECKING:
+    from mne.io import Raw
 
 
-def preprocess_eeg(raw, **kwargs):
+def preprocess_eeg(raw: Raw, **kwargs: Any) -> tuple[np.ndarray, list[str]]:
     """
     Preprocess EEG data using a standardized MNE-based pipeline.
 
-    Parameters
-    ----------
-    raw : mne.io.Raw
-        Raw EEG data object.
-    **kwargs : dict
-        Override parameters from ANALYSIS_PARAMS.
-
-    Returns
-    -------
-    Tuple[np.ndarray, List[str]]
-        Preprocessed epochs data (n_epochs, n_channels, n_samples) and channel names.
+    Pipeline: resample -> reference -> channel select -> filter -> epoch -> normalize
     """
-    params = {**ANALYSIS_PARAMS, **kwargs}
+    params = {**ANALYSIS_PARAMS, **kwargs}  # Merge defaults with overrides
     raw_copy = raw.copy()
 
-    # Exclude specified auxiliary channels (e.g., VEOG/HEOG/EMG) if present
+    # Step 1: Drop non-EEG auxiliary channels (VEOG, HEOG, EMG)
     exclude = params.get('exclude_channels', [])
     if exclude:
         to_drop = [ch for ch in exclude if ch in raw_copy.ch_names]
         if len(to_drop) > 0:
             raw_copy.drop_channels(to_drop)
 
+    # Step 2: Resample to target frequency (default 500 Hz)
     if raw_copy.info['sfreq'] != params['target_sfreq']:
         raw_copy.resample(params['target_sfreq'], verbose=False)
 
-    # Reference to A2 if available, otherwise average reference
+    # Step 3: Apply reference (A2 ear lobe preferred, fallback to average)
     ref_ch = params.get('reference_channel', None)
     if ref_ch and ref_ch in raw_copy.ch_names:
         try:
             raw_copy.set_eeg_reference(ref_channels=[ref_ch], verbose=False)
-        except Exception:
+        except (ValueError, RuntimeError):
+            # Fall back to average reference if specified channel fails
             raw_copy.set_eeg_reference('average', projection=True, verbose=False).apply_proj(verbose=False)
     else:
         raw_copy.set_eeg_reference('average', projection=True, verbose=False).apply_proj(verbose=False)
 
-    # Deterministic channel selection: prefer named list
+    # Step 4: Channel selection (named > first-N > random)
     eeg_channels = mne.pick_types(raw_copy.info, eeg=True)
     eeg_channel_names = [raw_copy.ch_names[i] for i in eeg_channels]
     if not eeg_channel_names:
@@ -75,39 +74,36 @@ def preprocess_eeg(raw, **kwargs):
         else:
             raw_copy.pick(eeg_channel_names[:n_channels])
 
+    # Step 5: Bandpass filter (1-40 Hz for broadband)
     raw_copy.filter(l_freq=1, h_freq=40, fir_design='firwin', verbose=False)
 
+    # Step 6: Optional subsampling to reduce computation
     if params.get('subsample_factor_broadband', 1) > 1:
         raw_copy.resample(raw_copy.info['sfreq'] / params['subsample_factor_broadband'], verbose=False)
 
+    # Step 7: Create fixed-length epochs
     epochs = mne.make_fixed_length_epochs(raw_copy, duration=params['epoch_length'], preload=True, verbose=False)
     epochs_data = epochs.get_data()
 
+    # Step 8: Z-score normalize each channel within each epoch
     for i, epoch in enumerate(epochs_data):
         mean, std = np.mean(epoch, axis=1, keepdims=True), np.std(epoch, axis=1, keepdims=True)
-        std[std == 0] = 1
+        std[std == 0] = 1  # Prevent division by zero for flat channels
         epochs_data[i] = (epoch - mean) / std
 
     return epochs_data, raw_copy.ch_names
 
 
-def preprocess_eeg_by_bands(raw, bands=None, **kwargs):
+def preprocess_eeg_by_bands(
+    raw: Raw,
+    bands: list[str] | None = None,
+    **kwargs: Any,
+) -> tuple[dict[str, np.ndarray], list[str]]:
     """
-    Preprocess EEG data by spectral bands.
+    Preprocess EEG by spectral bands (delta, theta, alpha, beta, gamma, broadband).
 
-    Parameters
-    ----------
-    raw : mne.io.Raw
-        Raw EEG data object.
-    bands : List[str], optional
-        List of band names to process. If None, uses all bands from SPECTRAL_BANDS.
-    **kwargs : dict
-        Override parameters from ANALYSIS_PARAMS.
-
-    Returns
-    -------
-    Tuple[Dict[str, np.ndarray], List[str]]
-        Dictionary mapping band names to epoch data arrays, and channel names.
+    Same pipeline as preprocess_eeg but with band-specific filtering and subsampling.
+    Returns dict mapping band names to epoch arrays.
     """
     params = {**ANALYSIS_PARAMS, **kwargs}
     use_all_channels = params.get('use_all_channels', False)
@@ -136,7 +132,8 @@ def preprocess_eeg_by_bands(raw, bands=None, **kwargs):
         if ref_ch and ref_ch in raw_copy.ch_names:
             try:
                 raw_copy.set_eeg_reference(ref_channels=[ref_ch], verbose=False)
-            except Exception:
+            except (ValueError, RuntimeError):
+                # Fall back to average reference if specified channel fails
                 raw_copy.set_eeg_reference('average', projection=True, verbose=False).apply_proj(verbose=False)
         else:
             raw_copy.set_eeg_reference('average', projection=True, verbose=False).apply_proj(verbose=False)

@@ -64,8 +64,14 @@ from .config import (
 
 # Loaders
 from .loaders import (
+    # BrainVision
     create_subject_file_map,
     extract_condition,
+    # DS005620
+    create_ds005620_subject_file_map,
+    load_ds005620_epochs,
+    get_ds005620_epochs_data,
+    # Sedation
     SedationDataCache,
     create_sedation_subject_file_map,
     get_sedation_epochs_data,
@@ -104,6 +110,9 @@ __all__ = [
     # Loaders
     'create_subject_file_map',
     'extract_condition',
+    'create_ds005620_subject_file_map',
+    'load_ds005620_epochs',
+    'get_ds005620_epochs_data',
     'SedationDataCache',
     'create_sedation_subject_file_map',
     'get_sedation_epochs_data',

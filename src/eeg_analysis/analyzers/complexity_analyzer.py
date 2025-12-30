@@ -77,27 +77,17 @@ class BroadbandResult:
 
 class ComplexityAnalyzer:
     """
-    Analyzer dedicated to computing the Minimum Information Bipartition (MIB).
-    
-    1. Load and preprocess EEG data.
-    2. Run epoch-wise analysis in parallel using the specified estimator.
-    3. Calculate the MIB for each epoch and summarize the results.
-    4. Handle both broadband and spectral analysis.
+    MIB (Minimum Information Bipartition) analyzer for neural complexity.
+
+    Usage:
+        estimator = BinningEstimator(n_bins=50)
+        analyzer = ComplexityAnalyzer(estimator)
+        result = analyzer.analyze_eeg_file('data.vhdr')  # Broadband
+        results = analyzer.run_analysis('spectral', files, output_dir)  # Multi-band
     """
-    
+
     def __init__(self, estimator, verbose=True, **kwargs):
-        """
-        Initialize the analyzer for MIB computation.
-        
-        Parameters:
-        -----------
-        estimator : BaseMIEstimator
-            An instance of an MI estimator (e.g., KSGEstimator).
-        verbose : bool
-            Whether to print progress messages.
-        **kwargs : dict
-            Method-specific parameters.
-        """
+        """Initialize with MI estimator (BinningEstimator recommended)."""
         self.estimator = estimator
         self.metric = 'mib'
         self.method_name = f"{self.metric.upper()}-{self.estimator.name}"
