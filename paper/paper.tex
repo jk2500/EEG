@@ -1,0 +1,638 @@
+\documentclass[11pt]{article}
+
+\usepackage[english]{babel}
+\usepackage[letterpaper,top=2cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+
+% Math + tables
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{tabularx}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+% Figures + layout
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{float}
+
+% Text helpers
+\usepackage{enumitem}
+\usepackage{dirtytalk}
+
+% Links
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+% Figures are vendored into paper/figures/ so this folder is standalone.
+\graphicspath{{figures/}}
+
+% Search tables/ when compiling from the paper/ directory.
+\makeatletter
+\def\input@path{{tables/}}
+\makeatother
+
+\title{Minimum Information Bipartition of EEG as a Proxy for Integrated Information Across Sedation}
+\author{Ramakrishna Paramahamsa Kompella \\ BE21B029}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Integrated Information Theory (IIT) proposes that consciousness corresponds to the degree to which a system's current state is both informative and irreducible to independent parts. Direct computation of IIT's $\Phi$ is not tractable for continuous, high-dimensional EEG. Here we operationalize a conservative, information-theoretic proxy: the \emph{minimum information bipartition} (MIB), defined as the minimum mutual information across all bipartitions of a multichannel signal. We estimate MIB in a Monte Carlo design that (i) repeatedly samples random channel subsets, (ii) evaluates MIB across fixed-length epochs, and (iii) repeats the same pipeline within canonical spectral bands. We apply the method to two sedation-related EEG datasets: (i) a BrainVision EEG-BIDS dataset with awake eyes-open/eyes-closed and propofol sedation conditions, and (ii) an independent EEGLAB dataset spanning baseline, light sedation, deep sedation, and recovery (repository paths are listed in Data and Code Availability). We report robustness checks for estimator choice (binning vs.\ Gaussian baseline), bin-count sensitivity, and distributional assumptions. Across subjects in the BrainVision EEG-BIDS dataset, the alpha band provides the most consistent single-band separation between awake and sedation, but primarily driven by the eyes-closed condition; no single band robustly separates both awake conditions from sedation. In the Sedation-RestingState dataset, changes in MIB across sedation depth are small and non-monotonic across bands, yielding no clear spectral identifier. Together these results clarify when band-limited integration proxies align with behavioral state and when they fail, highlighting both the promise and limits of IIT-motivated metrics on EEG.
+\end{abstract}
+
+\section{Introduction}
+The investigation into consciousness has a long philosophical history, from Descartes' \say{Cogito ergo sum} to the Mandukya Upanishad's description of \emph{turiya}, a state beyond waking, dreaming, and deep sleep. Modern neuroscience faces a different framing: given a physical system, what measurable properties are \emph{necessary} (and ideally sufficient) for it to support conscious experience?
+
+Integrated Information Theory (IIT) addresses this question by linking phenomenological properties of experience to properties of physical mechanisms. A common summary of IIT's axioms is:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Existence:} experience exists intrinsically (from the system's own perspective).
+    \item \textbf{Composition:} experience is structured (it has parts and relations).
+    \item \textbf{Information:} experience is specific (it rules out alternatives).
+    \item \textbf{Integration:} experience is unified and irreducible to independent components.
+    \item \textbf{Exclusion:} experience is definite (one set of mechanisms at one spatiotemporal scale).
+\end{itemize}
+The theory formalizes these ideas through $\Phi$, the integrated information of a mechanism under a partition that minimizes cause--effect power. In practice, $\Phi$ requires a discrete, Markovian description of system dynamics and becomes intractable as dimensionality grows.
+
+This motivates \emph{proxy} measures that preserve the central intuition: a conscious system should exhibit \emph{strong dependence across parts} that cannot be eliminated by splitting it into two nearly independent subsystems. In EEG, a natural operationalization is to treat channels (or channel subsets) as the parts and quantify the dependence across a bipartition using mutual information. The \emph{minimum information bipartition} (MIB) then acts as a lower bound on global integration: if even the weakest split shares substantial information, the system is difficult to decompose.
+
+\section{Study Overview and Assumptions}
+\subsection{Assumptions}
+Our analysis is designed to be concrete and reproducible, and therefore makes several explicit assumptions:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Within-epoch stationarity:} within a fixed-length window, the signal is approximately stationary so that time samples can be treated as i.i.d.\ for entropy estimation.
+    \item \textbf{Comparability under a fixed pipeline:} preprocessing (re-referencing, filtering, resampling, and normalization) is applied identically across conditions so that differences in estimated integration reflect state differences rather than pipeline artifacts.
+    \item \textbf{Channel subsets as ``parts'':} EEG channels are treated as coarse observables of underlying neural populations; integration is assessed at this measurement scale rather than at the level of microstates.
+    \item \textbf{Proxy status:} MIB is not IIT's $\Phi$. It is an information-theoretic \emph{lower-bound proxy} that captures irreducibility under bipartitions of the observed signal.
+\end{enumerate}
+
+\subsection{Datasets}
+We designate one dataset as \emph{primary} for hypothesis generation and hyperparameter selection, and we use an independent dataset as a robustness check:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Primary dataset: BrainVision EEG-BIDS (ds005620).} A repeated-awakening propofol-sedation study distributed in EEG-BIDS/BrainVision format. Repository path listed in Table~\ref{tab:path_index}. We use resting-state EEG recordings in three conditions:
+    \begin{itemize}[leftmargin=*]
+        \item awake eyes open (\texttt{awake\_eyes\_open}; \texttt{task-awake\_acq-EO})
+        \item awake eyes closed (\texttt{awake\_eyes\_closed}; \texttt{task-awake\_acq-EC})
+        \item sedation (\texttt{sedation\_1}; \texttt{task-sed\_acq-rest}; run-1 when multiple runs exist)
+    \end{itemize}
+    Across-subject summaries in this paper use $N=20$ subjects with all three conditions available.
+    \item \textbf{Robustness dataset: Sedation-RestingState (EEGLAB).} An independent resting-state sedation dataset distributed as EEGLAB \texttt{.set} and \texttt{.fdt} files with index file \texttt{datainfo.mat}. Repository path listed in Table~\ref{tab:path_index}. Recordings are already epoched ($\approx$\SI{10}{s}), with 91 channels and a native sampling rate of \SI{250}{Hz}. We analyze four within-subject conditions: baseline, light sedation, deep sedation, and recovery ($N=20$ subjects with all four conditions).
+\end{itemize}
+
+\subsection{Primary endpoint}
+For each subject and condition, our primary endpoint is the \emph{mean of per-repeat MIB means} computed under random channel sampling (Methods). This yields a single scalar per subject/condition/band, enabling within-subject comparisons across behavioral state.
+
+\subsection{Narrative roadmap}
+The experimental logic of the paper proceeds in four steps:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Question:} can an IIT-motivated integration proxy (MIB) track behavioral state changes associated with consciousness (wakefulness versus sedation)?
+    \item \textbf{Primary dataset choice:} use ds005620 as the primary dataset for hyperparameter selection and hypothesis generation because it provides within-subject awake (eyes-open/eyes-closed) and sedation recordings.
+    \item \textbf{Calibration and hyperparameter selection:} on ds005620, perform Gaussianity diagnostics and hyperparameter sweeps (bin count, epoch length, channel count) to select a stable operating point for the estimator.
+    \item \textbf{Main experiment and robustness:} apply the fixed operating point to the full ds005620 cohort to identify which representations (broadband vs.\ spectral bands) best differentiate state, and then evaluate robustness by applying the same pipeline to an independent dataset (Sedation-RestingState).
+\end{enumerate}
+
+\section{Key Findings}
+To foreground the concrete empirical conclusions:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{ds005620 (BrainVision EEG-BIDS): alpha is the strongest single-band identifier.} Across $N=20$ subjects, alpha MIB is higher in awake eyes-closed than in sedation (mean difference $+0.269$, $p=0.009$) and modestly higher for awake-average than sedation (mean difference $+0.205$, $p=0.027$).
+    \item \textbf{ds005620 (BrainVision EEG-BIDS): no single band separates both awake conditions from sedation.} Eyes-open versus sedation is mixed (e.g., delta and broadband are lower in eyes-open than sedation), so a single-band \say{awake $>$ sedation} discriminator does not generalize across awake subconditions.
+    \item \textbf{Sedation-RestingState: no clear spectral identifier of sedation depth.} Baseline versus deep sedation shows only a modest delta effect (baseline$-$deep $+0.140$, $p=0.047$) and negligible alpha change (baseline$-$deep $+0.008$, $p=0.911$), with several non-monotonic changes across conditions.
+    \item \textbf{Robustness:} EEG epochs are strongly non-Gaussian under normality tests and Q--Q diagnostics; bin-count sweeps confirm that MIB magnitude depends on discretization, motivating fixed hyperparameters and an emphasis on within-pipeline comparisons.
+\end{itemize}
+
+\section{Methods}
+\subsection{Codebase and workflow}
+All analyses in this paper are generated by a single reproducible codebase. The two executable entrypoints are:
+\begin{itemize}[leftmargin=*]
+    \item \texttt{random\_channels\_mib.py} (BrainVision/BIDS recordings; ds005620).
+    \item \texttt{sedation\_mib\_analysis.py} (EEGLAB epoched recordings; Sedation-RestingState).
+\end{itemize}
+Both entrypoints delegate to shared library code:
+\begin{itemize}[leftmargin=*]
+    \item \texttt{preprocessing.py} (epoching and filtering),
+    \item \texttt{partitions.py} (bipartition generation),
+    \item \texttt{complexity\_analyzer.py} (epoch-wise MIB evaluation),
+    \item \texttt{estimators.py} (entropy/MI estimators; binning is primary).
+\end{itemize}
+
+\subsection{Dataset indexing, condition labeling, and inclusion}
+\paragraph{ds005620 (BrainVision, BIDS-like).}
+We index subjects and conditions using the BrainVision loader (Table~\ref{tab:path_index}):
+\begin{itemize}[leftmargin=*]
+    \item Conditions are inferred from filenames:
+    \begin{itemize}[leftmargin=*]
+        \item \texttt{task-awake\_acq-EO} $\rightarrow$ \texttt{awake\_eyes\_open}
+        \item \texttt{task-awake\_acq-EC} $\rightarrow$ \texttt{awake\_eyes\_closed}
+        \item \texttt{task-sed\_acq-rest} $\rightarrow$ \texttt{sedation\_1}
+        \item \texttt{task-sed2\_acq-rest} $\rightarrow$ \texttt{sedation\_2}
+    \end{itemize}
+    \item We restrict to these resting acquisitions and do not analyze other acquisition types present in the dataset (e.g.\ \texttt{acq-tms} sessions).
+    \item When multiple files exist per subject/condition (e.g.\ multiple sedation runs), we retain the first file (lexicographic order; typically \texttt{run-1}) to keep a single recording per subject/condition.
+    \item A subject is included in a sweep if at least two conditions are present (to enable within-subject contrasts).
+    \item For the across-subject comparisons reported here, we restrict to subjects with \texttt{sedation\_1} and both awake conditions available ($N=20$ subjects).
+\end{itemize}
+
+\paragraph{Sedation-RestingState (EEGLAB epochs).}
+We index files using \texttt{sedation.py} by parsing \texttt{datainfo.mat}. Each subject has up to four condition files:
+\texttt{baseline}, \texttt{light\_sedation}, \texttt{deep\_sedation}, \texttt{recovery}.
+When multiple files exist per subject/condition, we retain the first encountered file to keep a single recording per condition. The analyses reported here use $N=20$ subjects with all four conditions.
+
+\subsection{Preprocessing}
+All preprocessing is performed in MNE-Python and is identical across conditions within a dataset, except where the dataset format requires a different loading interface.
+
+\paragraph{ds005620 preprocessing (BrainVision).}
+For each recording we apply preprocessing functions in \texttt{preprocessing.py}:
+\begin{itemize}[leftmargin=*]
+    \item \texttt{preprocess\_eeg} (broadband).
+    \item \texttt{preprocess\_eeg\_by\_bands} (spectral).
+\end{itemize}
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Channel selection for preprocessing:} drop auxiliary channels when present (\texttt{VEOG}, \texttt{HEOG}, \texttt{EMG}) and retain EEG channels.
+    \item \textbf{All-channel spectral preprocessing:} for spectral runs, preprocessing retains \emph{all} remaining EEG channels (rather than truncating to $k$) so that random channel subsets are sampled from the full montage.
+    \item \textbf{Resampling:} resample to a common sampling rate of \SI{500}{Hz} (\texttt{target\_sfreq}).
+    \item \textbf{Re-referencing:} reference to \texttt{A2} if available; otherwise use an average reference (projection, applied).
+    \item \textbf{Filtering:}
+    broadband preprocessing uses a \SIrange{1}{40}{Hz} band-pass filter;
+    spectral preprocessing uses a band-pass filter per band (delta/theta/alpha/beta/gamma, plus a \SIrange{1}{100}{Hz} broadband band for comparison).
+    \item \textbf{Subsampling:} after filtering, resample by a fixed factor to reduce computation.
+    \begin{itemize}[leftmargin=*]
+        \item Broadband uses \texttt{subsample\_factor\_broadband}=10.
+        \item Spectral uses \texttt{subsample\_factor\_spectral}=2 with per-band overrides:
+        \begin{itemize}[leftmargin=*]
+            \item delta/theta: 10
+            \item alpha: 8
+            \item beta: 4
+            \item gamma: 2
+        \end{itemize}
+    \end{itemize}
+    \item \textbf{Epoching:} segment into non-overlapping fixed-length epochs of duration \texttt{epoch\_length} (primary: \SI{5}{s}; sensitivity: \SI{10}{s}).
+    \item \textbf{Normalization:} for each epoch and channel, z-score across time (mean 0, variance 1; constant channels are stabilized by setting std to 1).
+\end{enumerate}
+
+\paragraph{Sedation-RestingState preprocessing (EEGLAB epochs).}
+Recordings are already epoched in the source dataset. For each file we apply preprocessing functions in \texttt{sedation.py}:
+\begin{itemize}[leftmargin=*]
+    \item \texttt{preprocess\_sedation\_epochs} (broadband).
+    \item \texttt{preprocess\_sedation\_epochs\_by\_bands} (spectral).
+\end{itemize}
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Resampling:} resample to \SI{250}{Hz} if needed (native is \SI{250}{Hz}; epoch duration is $\approx$\SI{10}{s}).
+    \item \textbf{Re-referencing:} apply an average reference (projection, applied).
+    \item \textbf{All-channel spectral preprocessing:} for spectral runs, preprocessing retains all EEG channels so that random channel subsets are sampled from the full montage (91 channels in this dataset).
+    \item \textbf{Filtering and subsampling:} apply the same band definitions as above and the same band-specific subsampling policy.
+    \item \textbf{Normalization:} z-score each epoch per channel.
+\end{enumerate}
+
+\subsection{Spectral bands}
+Spectral analyses apply identical MIB computation to band-limited signals using standard EEG ranges:
+\begin{align*}
+\text{delta: }[0.5,4]\text{ Hz},\quad
+\text{theta: }[4,8]\text{ Hz},\quad
+\text{alpha: }[8,13]\text{ Hz},\\
+\text{beta: }[13,30]\text{ Hz},\quad
+\text{gamma: }[30,100]\text{ Hz},\quad
+\text{broadband: }[1,100]\text{ Hz}.
+\end{align*}
+
+\subsection{Information-theoretic foundations}
+\paragraph{Entropy and mutual information.}
+Let $X$ be a discrete random variable with distribution $p(x)$. Its Shannon entropy (in bits) is
+\begin{equation}
+H(X) = -\sum_{x} p(x)\log_{2} p(x).
+\label{eq:entropy}
+\end{equation}
+For two variables $X$ and $Y$, the mutual information is
+\begin{equation}
+I(X;Y) = H(X) + H(Y) - H(X,Y)
+= \sum_{x,y} p(x,y)\log_{2}\frac{p(x,y)}{p(x)p(y)}.
+\label{eq:mi}
+\end{equation}
+
+\paragraph{Integration across a bipartition.}
+Let $\mathbf{X}=(X_1,\dots,X_n)$ represent an $n$-channel multivariate signal within an epoch, and let $A \subset \{1,\dots,n\}$ be a non-empty proper subset with complement $\bar{A}$. We define the \emph{integration} across the bipartition $(A,\bar{A})$ as
+\begin{equation}
+\mathcal{I}(A;\bar{A}) \equiv I(\mathbf{X}_A;\mathbf{X}_{\bar{A}}).
+\label{eq:integration}
+\end{equation}
+
+\paragraph{Minimum information bipartition (MIB).}
+The MIB of an epoch is the minimum integration across all non-trivial bipartitions:
+\begin{equation}
+\Phi_{\mathrm{MIB}}(\mathbf{X})
+\equiv \min_{\emptyset \neq A \subsetneq \{1,\dots,n\}} \mathcal{I}(A;\bar{A}).
+\label{eq:mib}
+\end{equation}
+This quantity is a conservative measure of global irreducibility: it is large only if \emph{every} way of cutting the system preserves strong dependence.
+
+\subsection{Estimating entropy and integration}
+\paragraph{Binning estimator (primary).}
+EEG is continuous; we therefore discretize amplitudes by uniform binning and estimate entropies from empirical frequencies. For a channel subset $\mathbf{X}_A$ with $m$ channels and $T$ time samples in an epoch:
+\begin{enumerate}[leftmargin=*]
+    \item Each channel time series is mapped to a discrete alphabet of $B$ bins using equal-width bins between its within-epoch minimum and maximum (after z-scoring).
+    \item Each time sample yields a joint bin index $b \in \{1,\dots,B^{m}\}$ for $\mathbf{X}_A$.
+    \item With counts $n_b$ and $\hat{p}(b)=n_b/T$, we estimate
+    \begin{equation}
+        \widehat{H}(\mathbf{X}_A) = -\sum_{b:\,n_b>0}\hat{p}(b)\log_{2}\hat{p}(b).
+        \label{eq:binning_entropy}
+    \end{equation}
+    \item Integration is then estimated via Eq.~\eqref{eq:integration} with entropies replaced by their binned estimates.
+\end{enumerate}
+The main analyses use $B=10$ bins to balance resolution against estimator variance in finite windows.
+
+\paragraph{Implementation details and numerical constraints.}
+Our implementation uses per-channel min--max binning within each epoch, then encodes the multivariate bin assignment at each time sample as a base-$B$ integer index (and computes entropy by sorting and counting repeated indices). The reference implementation is in \texttt{estimators.py} (Table~\ref{tab:path_index}). Two practical constraints follow:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{State-space sparsity:} joint histograms in $m$ dimensions are sparse when $T \ll B^m$; this biases entropy downward and increases sensitivity to $B$ (addressed by our bin-count sweep and by fixing $B$ across conditions).
+    \item \textbf{Integer encoding range:} base-$B$ encoding is performed in signed 64-bit integers, requiring $B^{m} < 2^{63}$ to avoid collisions from overflow. Our primary configuration ($B=10$, $m=k=16$) satisfies this constraint ($10^{16} \ll 2^{63}$); exploratory sweeps that increase $B$ and/or $m$ must be interpreted cautiously or implemented with a different joint-state encoding.
+\end{itemize}
+All entropies and mutual informations are reported in bits (base-2 logarithms).
+
+\paragraph{Gaussian baseline (diagnostic).}
+As a theoretical reference, if $\mathbf{X}$ were multivariate Gaussian with covariance $\Sigma$, its differential entropy (in bits) would be
+\begin{equation}
+h(\mathbf{X}) = \frac{1}{2}\log_{2}\left((2\pi e)^{n}\det \Sigma\right).
+\label{eq:gaussian_entropy}
+\end{equation}
+The corresponding Gaussian mutual information across a bipartition is
+\begin{equation}
+I_{\mathcal{N}}(A;\bar{A}) = \frac{1}{2}\log_{2}\frac{\det \Sigma_A \det \Sigma_{\bar{A}}}{\det \Sigma_{A\cup \bar{A}}}.
+\label{eq:gaussian_mi}
+\end{equation}
+We compute this quantity as a diagnostic baseline and to quantify how non-Gaussianity and discretization affect magnitude and stability (Results; robustness checks).
+
+\subsection{Monte Carlo estimation via random channel sampling}
+\paragraph{What is sampled (and why).}
+Our estimator has two explicit Monte Carlo components that make it scalable and allow us to quantify robustness:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Random channel sampling} (spatial sampling): repeated draws of $k$ channels from the full montage quantify sensitivity to channel choice and reduce dependence on any hand-picked montage.
+    \item \textbf{Random bipartition sampling} (partition sampling): when $k>8$, we evaluate only a fixed-size subset of all bipartitions (127) to control combinatorial growth while keeping the partition set reproducible.
+\end{enumerate}
+
+\paragraph{Random channel subsets.}
+Let $C_r$ denote a random subset of $k$ channels (without replacement) drawn from all available EEG channels for a recording. For each repeat $r \in \{1,\dots,R\}$, we restrict each epoch to $C_r$ and compute $\Phi_{\mathrm{MIB}}$.
+
+\paragraph{Per-repeat and aggregated estimators.}
+Let $\Phi_{r,e}$ denote the epoch-level MIB (Eq.~\eqref{eq:mib}) for epoch $e$ under channel subset $C_r$. For each repeat we compute an epoch average:
+\begin{equation}
+\overline{\Phi}_{r} = \frac{1}{E}\sum_{e=1}^{E} \Phi_{r,e}.
+\label{eq:repeat_mean}
+\end{equation}
+We then aggregate across repeats:
+\begin{equation}
+\widehat{\mu}_{\Phi} = \frac{1}{R}\sum_{r=1}^{R}\overline{\Phi}_{r},
+\qquad
+\widehat{\sigma}_{\Phi} = \sqrt{\frac{1}{R-1}\sum_{r=1}^{R}\left(\overline{\Phi}_{r}-\widehat{\mu}_{\Phi}\right)^2 }.
+\label{eq:aggregate_mean}
+\end{equation}
+We report the coefficient of variation (CV) across repeats,
+\begin{equation}
+\mathrm{CV} = \frac{\widehat{\sigma}_{\Phi}}{|\widehat{\mu}_{\Phi}|},
+\label{eq:cv}
+\end{equation}
+as a scale-free stability metric.
+
+\paragraph{Run configuration used in this paper.}
+Unless stated otherwise, spectral results use:
+$R=50$ random channel repeats,
+$k=16$ channels per repeat,
+and the binning estimator with $B=10$ bins.
+For ds005620 we use \SI{5}{s} epochs for primary analyses (plus \SI{10}{s} for sensitivity);
+for Sedation-RestingState we use the native $\approx$\SI{10}{s} epoched data.
+Random draws use a fixed RNG seed (\texttt{rng\_seed}=42) for reproducibility.
+These defaults are chosen based on estimator diagnostics and hyperparameter sweeps on the primary dataset (Results, Section~\ref{sec:ds005620_calibration}).
+
+\paragraph{Fixed-channel epoch stability.}
+In addition to random channel repeats, the pipeline computes an \emph{epoch-stability} view by fixing a deterministic channel set (length $k$) and computing MIB across epochs. This separates within-recording temporal variability from across-repeat channel sampling variability.
+
+\paragraph{Bipartition sampling for computational control.}
+The number of bipartitions grows combinatorially with $k$. For $k=8$, all non-trivial bipartitions total $2^{k-1}-1=127$; for larger $k$ this is infeasible. We therefore cap the number of evaluated bipartitions at 127 by sampling a fixed, reproducible subset of partitions when $k>8$. This makes $\Phi_{\mathrm{MIB}}$ an \emph{approximation} to Eq.~\eqref{eq:mib}; specifically, minimizing over a subset yields an upper bound on the true minimum, but the approximation is applied identically across conditions and repeats.
+
+\paragraph{Bipartition generation details.}
+Bipartitions are generated deterministically by enumerating all subsets up to size $\lfloor k/2 \rfloor$ and removing duplicates by storing only one side of each split (for equal-size splits, we keep only those containing channel index 0). When $k>8$, the 127 partitions are sampled without replacement with \texttt{partition\_seed}=42.
+
+\subsection{Derived composite metrics}
+\paragraph{Awake-average.}
+To summarize wakefulness without privileging eyes-open or eyes-closed, we define an \emph{awake-average} per subject and band as:
+\begin{equation}
+\widehat{\mu}_{\Phi}^{\mathrm{awake\_avg}}(b)
+=
+\frac{\widehat{\mu}_{\Phi}^{\mathrm{awake\_eyes\_open}}(b) + \widehat{\mu}_{\Phi}^{\mathrm{awake\_eyes\_closed}}(b)}{2},
+\label{eq:awake_avg}
+\end{equation}
+where $\widehat{\mu}_{\Phi}^{c}(b)$ denotes the subject-level mean-of-per-repeat means for condition $c$ and band $b$ (Eq.~\eqref{eq:aggregate_mean}).
+
+\paragraph{Band composites.}
+We also report linear composites of band-specific MIB to probe whether \emph{relative} weighting of higher versus lower frequencies is more stable than any single band:
+\begin{align}
+\mathrm{low\_dt} &= \frac{\Phi_{\delta} + \Phi_{\theta}}{2}, \\
+\mathrm{high\_abc} &= \frac{\Phi_{\alpha} + \Phi_{\beta} + \Phi_{\gamma}}{3}, \\
+\mathrm{high\_bg} &= \frac{\Phi_{\beta} + \Phi_{\gamma}}{2}, \\
+\mathrm{mid\_alpha\_beta} &= \frac{\Phi_{\alpha} + \Phi_{\beta}}{2}, \\
+\mathrm{high\_over\_low} &= \mathrm{high\_abc} - \mathrm{low\_dt}.
+\end{align}
+Here $\Phi_{\delta}$ denotes the band-specific MIB summary for that subject/condition (Eq.~\eqref{eq:aggregate_mean}); composites are computed within-subject and then contrasted across conditions using the same statistical procedure as for single bands.
+
+\subsection{Statistical comparisons}
+\paragraph{What is tested.}
+All statistical tests operate on condition-level summaries computed from the Monte Carlo estimator above. Concretely, for each subject, condition, and band we use $\widehat{\mu}_{\Phi}$ (Eq.~\eqref{eq:aggregate_mean}), i.e.\ the mean of per-repeat epoch-mean MIB values.
+
+\paragraph{Across-subject contrasts (primary).}
+For ds005620, we compute within-subject differences between an awake condition and sedation\_1 (or awake-average and sedation\_1). We test whether the mean difference across subjects is non-zero using a one-sample $t$-test on the difference vector, and we additionally report a paired nonparametric Wilcoxon signed-rank test. We report:
+mean difference, standard deviation of differences, fraction of subjects with positive difference, Cohen's $d$ on differences ($d=\bar{d}/s_d$), and a 95\% CI on the mean difference using the $t$ distribution.
+
+\paragraph{Within-subject repeat-level contrasts (case study).}
+For the sub-1010 case study, we compare the distribution of per-repeat means (50 repeats per condition) between conditions using Welch's $t$-test and Mann--Whitney U. False discovery rate (Benjamini--Hochberg) correction is applied across bands and comparisons.
+
+\paragraph{Sedation-RestingState contrasts.}
+For Sedation-RestingState, we compare conditions within-subject using paired $t$-tests (e.g., baseline vs deep\_sedation) and report mean differences and 95\% CIs across $N=20$ subjects.
+
+\subsection{Outputs, provenance, and reproducibility}
+\paragraph{Primary outputs.}
+Each run writes a JSON file containing:
+(i) preprocessing metadata, (ii) per-band results, (iii) per-repeat channel selections, and (iv) summary statistics (mean-of-per-repeat means, standard deviation of per-repeat means, CV, and min/max/range). The repository contains the frozen outputs used in this paper under:
+the results tree (exact paths listed in Table~\ref{tab:path_index}).
+
+\paragraph{Downstream summaries used in this paper.}
+All tables/figures are generated by analysis scripts (see Table~\ref{tab:path_index}) and staged into the paper folder for compilation.
+
+\paragraph{Determinism.}
+Random channel sampling uses \texttt{rng\_seed}=42 and bipartition sampling uses \texttt{partition\_seed}=42, making the sampled channel sets and sampled bipartitions reproducible given identical preprocessing.
+
+\subsection{Robustness analyses}
+\paragraph{Gaussianity testing.}
+To explicitly test the Gaussian assumption used by the analytic baseline (Eq.~\eqref{eq:gaussian_mi}), we evaluate normality on preprocessed broadband epochs from a representative subject (ds005620 sub-1067) in three conditions (awake eyes-open, awake eyes-closed, sedation). We report:
+\begin{itemize}[leftmargin=*]
+    \item Q--Q plots (qualitative tail diagnostics),
+    \item overall Shapiro--Wilk $p$-value on 5000 randomly sampled points,
+    \item overall D'Agostino--Pearson and Jarque--Bera normality tests on all samples,
+    \item per-channel skewness and excess kurtosis, plus the fraction of channels passing $p>0.05$.
+\end{itemize}
+
+\paragraph{Bin-count sensitivity.}
+We evaluate how discretization affects MIB by sweeping the number of bins $B \in \{5,10,20,30,50,75,100,150,200,300,400,500\}$ on the same representative subject/conditions, with $k=8$ channels (so that all 127 bipartitions are evaluated exactly). For each $B$ we compute the mean and standard deviation of MIB across epochs and the coefficient of variation, and we report the percentage of the Gaussian baseline recovered by the binned estimator. For concreteness, Table~\ref{tab:bin_count_keypoints} highlights $B=10$ (used in all main analyses) and a high-bin setting within the collision-free encoding bound for $k=8$ ($B=200$).
+
+\paragraph{Epoch-length and channel-count sensitivity.}
+We additionally probed sensitivity to epoch length and the number of channels on representative ds005620 recordings, summarizing the resulting mean MIB, variability, and condition differences (Extended Data; see figures referenced in Results). These sweeps are treated as diagnostics rather than as primary inferential results.
+
+\section{Results}
+\subsection{ds005620 (BrainVision EEG-BIDS): within-subject case study (sub-1010)}
+We first characterize a representative subject (sub-1010) to expose the structure of the estimator and the scale of within-recording variability.
+
+\paragraph{Run configuration.}
+Spectral MIB was computed with 50 random channel repeats, $k=16$ channels per repeat (sampled from 62 EEG channels after dropping auxiliary channels), and \SI{5}{s} epochs.
+
+\paragraph{Condition means by band.}
+\input{ds005620_sub1010_condition_means.tex}
+
+\paragraph{Within-subject band patterns.}
+Several within-subject regularities emerge (Table~\ref{tab:sub1010_means}):
+\begin{itemize}[leftmargin=*]
+    \item Eyes-open exhibits markedly lower delta/theta/broadband MIB than eyes-closed, while gamma is higher in eyes-open than eyes-closed.
+    \item Sedation\_1 resembles eyes-closed in delta and broadband, but is lower than eyes-closed in theta/alpha/beta.
+    \item Sedation\_1 exceeds eyes-open in delta/theta/alpha/broadband, but is lower in beta/gamma.
+\end{itemize}
+Full repeat-level statistics (Welch and Mann--Whitney tests with FDR correction) are reported in Supplementary Table~\ref{tab:sub1010_comparisons}.
+
+\paragraph{Stability and sampling sanity checks.}
+Across repeats, the mean coefficient of variation (CV) of per-repeat means is $\approx0.05$--$0.06$ depending on condition (awake eyes-closed: 0.0506; eyes-open: 0.0586; sedation\_1: 0.0560), indicating moderate sensitivity to channel choice even within a single recording. Fixed-channel epoch-stability CV is lowest in eyes-closed (0.066) and higher in eyes-open (0.144) and sedation\_1 (0.123), suggesting greater epoch-to-epoch variability in those states.
+Random channel sampling behaved as expected: with 50 repeats and $k=16$ channels drawn from 62, the expected selection count per channel is $50\times16/62=12.9$; observed counts range 7--22, and mean Jaccard overlap between repeat channel sets is 0.153, consistent with independent random draws.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{ds005620/sub1010_results/sub1010_band_means.png}
+\caption{Sub-1010: distribution of per-repeat mean MIB by condition and band (50 random channel repeats, $k=16$, \SI{5}{s} epochs).}
+\label{fig:sub1010_band_means}
+\end{figure}
+
+\subsection{ds005620: across-subject spectral MIB (\SI{5}{s} epochs)}
+We next test which frequency bands provide consistent state separation across subjects.
+All across-subject summaries use $N=20$ subjects with \texttt{sedation\_1} and both awake conditions available, with 50 repeats and $k=16$ channels per repeat for each subject/condition.
+
+\paragraph{Condition means.}
+\input{ds005620_condition_means_epoch5.tex}
+
+\paragraph{Awake versus sedation differences across bands.}
+The key empirical constraint is that eyes-open and eyes-closed are not interchangeable: some bands separate eyes-closed from sedation strongly, while eyes-open shows mixed behavior (including several \emph{awake $<$ sedation} effects).
+Full statistics for all bands and composite metrics are reported in Supplementary Table~\ref{tab:ds005620_all_subjects_epoch5}; selected highlights are:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Eyes-closed vs sedation:} delta $+0.309$ ($p_t=4.6\times10^{-6}$), theta $+0.249$ ($p_t=3.3\times10^{-3}$), alpha $+0.269$ ($p_t=9.3\times10^{-3}$).
+    \item \textbf{Eyes-open vs sedation:} delta $-0.422$ ($p_t=2.4\times10^{-4}$) and broadband $-0.389$ ($p_t=2.7\times10^{-3}$) are significantly \emph{lower} in eyes-open than in sedation.
+    \item \textbf{Awake-average vs sedation:} alpha is the strongest single-band candidate (mean difference $+0.205$, $p_t=2.7\times10^{-2}$); no other single band shows a significant positive awake-average effect at this epoch length.
+    \item \textbf{Composite stability:} high-frequency composites are more robust than any single band when the goal is to keep awake-average above sedation (e.g.\ high\_abc $+0.203$, $p_t=3.7\times10^{-2}$; high\_over\_low $+0.190$, $p_t=3.1\times10^{-2}$).
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{ds005620/all_subjects_results/awake_vs_sedation_by_band.png}
+\caption{ds005620 (BrainVision EEG-BIDS): awake--sedation differences by band for eyes-open, eyes-closed, and awake-average ($N=20$ subjects; epoch length \SI{5}{s}).}
+\label{fig:ds005620_awake_vs_sed}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{ds005620/all_subjects_results/awake_avg_vs_sedation_composites.png}
+\caption{ds005620 (BrainVision EEG-BIDS): composite metrics for awake-average minus sedation ($N=20$; epoch length \SI{5}{s}).}
+\label{fig:ds005620_composites}
+\end{figure}
+
+\subsection{ds005620 (BrainVision EEG-BIDS): epoch-length sensitivity (epoch length \SI{10}{s})}
+Because entropy estimation depends on sample size and stationarity, we repeated the across-subject ds005620 analysis using \SI{10}{s} epochs (same 50 repeats, $k=16$).
+
+\paragraph{Condition means.}
+\input{ds005620_condition_means_epoch10.tex}
+
+\paragraph{Key changes relative to \SI{5}{s} epochs.}
+Full statistics are reported in Supplementary Table~\ref{tab:ds005620_all_subjects_epoch10}. The main qualitative conclusions persist (eyes-open remains mixed relative to sedation), but several quantitative effects shift:
+\begin{itemize}[leftmargin=*]
+    \item Awake-average vs sedation becomes significantly negative for delta ($-0.215$, $p_t=3.0\times10^{-2}$) and broadband ($-0.243$, $p_t=3.7\times10^{-2}$).
+    \item Alpha no longer provides a significant awake-average advantage at \SI{10}{s} (awake-average $-$ sedation: $+0.109$, $p_t=0.324$), illustrating sensitivity of single-band inference to epoch length.
+    \item The composite high\_over\_low remains positive and significant for eyes-open and awake-average, indicating that relative balance between higher and lower bands is a more stable descriptor than any single band.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{ds005620/all_subjects_results_epoch10/epoch10_awake_avg_vs_sedation_by_band.png}
+\caption{ds005620 (BrainVision EEG-BIDS): awake-average minus sedation by band for \SI{10}{s} epochs ($N=20$).}
+\label{fig:ds005620_epoch10}
+\end{figure}
+
+\subsection{Sedation-RestingState: no clear spectral identifier of sedation depth}
+We analyzed spectral MIB for baseline, light sedation, deep sedation, and recovery with:
+50 repeats, $k=16$ channels per repeat, and \SI{10}{s} epochs (native epoched data).
+
+\paragraph{Across subjects, sedation depth effects are small and non-monotonic.}
+Across $N=20$ subjects, band-limited MIB varies across the four conditions, but changes are modest and do not follow a consistent monotone trajectory from baseline $\rightarrow$ light $\rightarrow$ deep $\rightarrow$ recovery.
+In particular, light sedation often increases MIB relative to baseline across multiple bands, while deep sedation decreases relative to light sedation; recovery frequently returns toward baseline but not uniformly.
+
+\paragraph{Condition-level means and variability.}
+\input{sedation_fourway_band_summary.tex}
+
+\paragraph{Pairwise condition differences.}
+Full paired differences for all six condition pairs and all six bands are reported in Supplementary Table~\ref{tab:sedation_fourway_pairwise}. Key points include:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Baseline vs deep sedation.}\newline Only delta shows a modest decrease in deep sedation (baseline$-$deep $+0.140$, $p=4.7\times10^{-2}$); alpha shows essentially no change (baseline$-$deep $+0.008$, $p=0.911$).
+    \item \textbf{Baseline vs light sedation.}\newline Several bands are higher in light sedation (e.g.\ alpha baseline$-$light $-0.108$, $p=1.0\times10^{-2}$; broadband baseline$-$light $-0.101$, $p=5.6\times10^{-3}$).
+    \item \textbf{Light vs deep sedation.}\newline The strongest within-sedation contrasts occur between light and deep sedation (e.g.\ delta light$-$deep $+0.214$, $p=5.7\times10^{-3}$; alpha light$-$deep $+0.116$, $p=3.4\times10^{-2}$; gamma light$-$deep $+0.146$, $p=2.7\times10^{-2}$).
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\caption{Sedation-RestingState paired differences baseline$-$deep sedation ($N=20$). The absence of a consistent pattern across bands motivates the conclusion that there is no clear spectral identifier of sedation depth under this MIB proxy.}
+\label{tab:sedation_results}
+\sisetup{round-mode=places,round-precision=3}
+\begin{tabular}{@{}l S[table-format=+1.3] S[table-format=1.3]@{}}
+\toprule
+Band & {Mean diff} & {$p$} \\
+\midrule
+Delta     & +0.140 & 0.047 \\
+Theta     & +0.102 & 0.132 \\
+Alpha     & +0.008 & 0.911 \\
+Beta      & +0.026 & 0.761 \\
+Gamma     & +0.095 & 0.145 \\
+Broadband & +0.044 & 0.508 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{sedation_resting_state/fourway_all_bands.png}
+\caption{Sedation-RestingState: subject trajectories across baseline, light sedation, deep sedation, and recovery for all bands (mean $\pm$ 95\% CI across $N=20$).}
+\label{fig:sedation_fourway_all_bands}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{sedation_resting_state/alpha_threeway_comparison.png}
+\caption{Sedation-RestingState: alpha-band MIB across baseline, light sedation, and deep sedation ($N=20$). Light sedation is higher than baseline ($p=1.0\times10^{-2}$) and higher than deep sedation ($p=3.4\times10^{-2}$), while baseline and deep sedation are similar.}
+\label{fig:sedation_alpha_threeway}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{sedation_resting_state/fourway_band_heatmap.png}
+\caption{Sedation-RestingState: mean spectral MIB by band and condition ($N=20$). Differences across conditions are modest and not band-specific, consistent with the lack of a clear spectral discriminator.}
+\label{fig:sedation_heatmap}
+\end{figure}
+
+\section{Robustness and Diagnostics}
+\subsection{Gaussianity testing}
+We explicitly tested whether EEG epochs are well-approximated as Gaussian. Q--Q plots show systematic deviations from normality with heavy tails, and normality tests reject the Gaussian hypothesis at conventional thresholds. This motivates using a nonparametric estimator (binning) as the primary estimator and using the Gaussian estimator only as a diagnostic baseline.
+
+\input{robustness_gaussianity.tex}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{gaussianity_comparison.png}
+\caption{Distributional diagnostics (representative subject/recording): Q--Q plots and summary statistics indicate substantial deviations from Gaussianity.}
+\label{fig:gaussianity}
+\end{figure}
+
+\subsection{Binning sensitivity (bin-count sweep)}
+We evaluated how the number of histogram bins $B$ affects MIB magnitude and stability. As expected, increasing $B$ increases estimated MIB (finer discretization reduces discretization bias) while generally reducing variability across epochs and repeats. However, even at large $B$ the binned estimator recovers only $\approx25\%$ of the analytic Gaussian baseline MIB on the same preprocessed epochs (Table~\ref{tab:bin_count_keypoints}; Fig.~\ref{fig:bin_sensitivity}). This gap is expected under (i) strong non-Gaussianity (Table~\ref{tab:gaussianity}) and (ii) finite-sample sparsity in high-dimensional joint histograms. We therefore fix $B=10$ for the main analyses as a stability-oriented choice and interpret results primarily through \emph{relative} comparisons across conditions and bands.
+
+\input{robustness_bin_count_keypoints.tex}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{bin_count_effect_multi.png}
+\caption{Binning sensitivity: mean MIB, standard deviation, and CV as a function of bin count, with dashed Gaussian baselines for reference (representative subject/recording).}
+\label{fig:bin_sensitivity}
+\end{figure}
+
+\subsection{Hyperparameter sensitivity (epoch length, channel count)}
+We also probed sensitivity to epoch length and number of channels on representative ds005620 recordings (sub-1067) as a diagnostic.
+Two robust patterns emerge:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Epoch length:} mean MIB and its stability vary with epoch length, reflecting the bias--variance trade-off between more samples per epoch and stronger nonstationarity within long windows.
+    \item \textbf{Channel count:} mean MIB increases with channel count (more degrees of freedom) while CV generally decreases, but condition differences can shift with $k$ because both the estimator and the partition sampling interact with dimensionality.
+\end{itemize}
+Because high-dimensional histogram encoding requires $B^k < 2^{63}$ in our implementation, channel-count sweeps at large $k$ are treated as qualitative diagnostics rather than as quantitative inference.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{epoch_length_effect.png}
+\caption{Epoch-length sensitivity diagnostic (representative ds005620 subject/recordings): mean MIB, stability (CV), number of available epochs, and condition differences as a function of epoch length.}
+\label{fig:epoch_length_effect}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{channel_count_effect_extended.png}
+\caption{Channel-count sensitivity diagnostic (representative ds005620 subject/recordings): mean MIB, stability (CV), MIB per channel, and condition differences as a function of channel count.}
+\label{fig:channel_count_effect}
+\end{figure}
+
+\section{Discussion}
+IIT emphasizes that consciousness requires information that is both specific and irreducible. The MIB proxy adopted here captures a minimal form of irreducibility under bipartitions of an observed multichannel signal: it is large only when \emph{even the weakest split} retains substantial mutual information. This makes MIB a conservative marker of global dependence, and therefore an IIT-motivated proxy for the \emph{integration} aspect of consciousness, while remaining agnostic to IIT's mechanistic cause--effect structure.
+
+\subsection*{What the results imply}
+Across ds005620, the empirical picture is state-dependent and condition-dependent:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Eyes-closed $>$ sedation in low/mid bands.} Delta/theta/alpha MIB are consistently higher in eyes-closed than in sedation across subjects (Supplementary Table~\ref{tab:ds005620_all_subjects_epoch5}).
+    \item \textbf{Eyes-open differs qualitatively from eyes-closed.} For eyes-open, low-frequency MIB can be \emph{lower} than sedation (delta and broadband), indicating that the mapping \say{higher MIB $\Rightarrow$ more conscious} is not globally monotone across all wakeful subconditions at the level of this proxy.
+    \item \textbf{Alpha is the most consistent single-band candidate when aggregating wakefulness.} At \SI{5}{s} epochs, alpha is the only single band with a significant positive awake-average minus sedation difference, matching the intuition that alpha rhythms reflect coordinated large-scale dynamics that are disrupted by sedation. However, this effect weakens at \SI{10}{s} epochs, highlighting that even the best single-band discriminator is sensitive to analysis scale.
+\end{itemize}
+Taken together, these points suggest that band-limited integration proxies can align with behavioral state in specific regimes (notably eyes-closed alpha), but can also reflect other physiological distinctions (eyes-open vs eyes-closed vigilance, sensory drive, and arousal) that are orthogonal to sedation depth.
+
+In Sedation-RestingState, the results are dominated by modest, non-monotonic changes (Table~\ref{tab:sedation_results}; Supplementary Table~\ref{tab:sedation_fourway_pairwise}). Light sedation often increases MIB relative to baseline, while deep sedation decreases relative to light sedation, and recovery partially returns toward baseline. This lack of a clear spectral identifier suggests that the relationship between sedation depth and this integration proxy is contingent on dataset specifics (montage, preprocessing, and the nature of sedation transitions) and may not generalize as a universal marker without additional constraints.
+
+\subsection*{Why might alpha matter (and why might it fail)?}
+Alpha rhythms are strongly modulated by arousal and thalamo-cortical coordination. A plausible IIT-consistent interpretation is that alpha-band activity reflects coordinated global states that maintain mutual dependence across distributed channels, and that sedation selectively disrupts these coordinated states even when slower rhythms remain mutually dependent (e.g., via common-mode or global oscillations). However, alpha can also be shaped by non-neural confounds (reference choice, volume conduction, muscular artifacts), and mutual information computed on instantaneous amplitudes can be inflated by shared sources without indicating mechanistic integration. These factors likely contribute to the dataset-dependent and hyperparameter-dependent nature of the observed effects.
+
+\section{Limitations}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Proxy mismatch:} $\Phi_{\mathrm{MIB}}$ is not IIT's $\Phi$ and does not model cause--effect structure.
+    \item \textbf{Partition and channel sampling:} the bipartition cap (127) yields an upper bound on the true minimum; random channel subsets trade spatial completeness for robustness quantification and require careful reporting of stability metrics.
+    \item \textbf{Estimator bias and scale dependence:} binning is sensitive to bin count and finite-sample sparsity (Table~\ref{tab:bin_count_keypoints}); epoch length and channel count influence both magnitude and condition differences (Figs.~\ref{fig:epoch_length_effect}--\ref{fig:channel_count_effect}).
+    \item \textbf{Non-Gaussianity:} EEG epochs are strongly non-Gaussian (Table~\ref{tab:gaussianity}); Gaussian baselines should be treated as diagnostics rather than as faithful estimators.
+    \item \textbf{EEG confounds:} volume conduction, referencing choices, and residual artifacts can induce dependencies that inflate mutual information without reflecting mechanistic integration.
+\end{itemize}
+
+\section{Conclusion}
+We implemented a concrete, reproducible, IIT-motivated MIB pipeline for EEG and grounded it in explicit diagnostics of estimator assumptions and hyperparameter sensitivity. In ds005620 (BrainVision EEG-BIDS), alpha-band MIB is the strongest single-band identifier of wakefulness versus sedation when aggregating wakeful subconditions, but no single band separates both eyes-open and eyes-closed from sedation, and single-band effects depend on epoch length. In Sedation-RestingState, MIB changes across sedation depth are modest and non-monotonic, yielding no clear spectral identifier. Overall, MIB behaves as a \emph{state-sensitive but context-dependent} integration proxy: it can capture meaningful differences under controlled conditions, but it is not a universal scalar marker of consciousness without careful specification of state, scale, and estimator.
+
+\section*{Data and Code Availability}
+This \texttt{paper/} folder is self-contained for compilation and includes all figures, tables, and source data. Full repository paths for datasets, scripts, and outputs are listed in Table~\ref{tab:path_index}.
+
+\begin{table}[H]
+\centering
+\begingroup
+\footnotesize
+\renewcommand{\arraystretch}{1.15}
+\sloppy
+\caption{Repository path index.}
+\label{tab:path_index}
+\begin{tabularx}{\linewidth}{@{}l Y@{}}
+\toprule
+Item & Path \\
+\midrule
+BrainVision EEG-BIDS dataset & \path{datasets/ds005620} \\
+Sedation-RestingState dataset & \path{datasets/sedation_resting_state} \\
+Entry script (ds005620) & \path{scripts/random_channels_mib.py} \\
+Entry script (sedation) & \path{scripts/sedation_mib_analysis.py} \\
+Core analysis package & \path{src/eeg_analysis/} \\
+Frozen results (ds005620, \SI{5}{s}) & \path{results/ds005620/mib_random_channels/}\newline\path{spectral/binning/epoch-5p00s/} \\
+Frozen results (ds005620, \SI{10}{s}) & \path{results/ds005620/mib_random_channels/}\newline\path{spectral/binning/epoch-10p00s/} \\
+Frozen results (sedation) & \path{results/sedation_resting_state/mib_sedation/}\newline\path{sedation/spectral/binning/} \\
+Generated summaries & \path{analysis/outputs/} \\
+Paper figures & \path{paper/figures/} \\
+Paper tables & \path{paper/tables/} \\
+Source data CSVs & \path{paper/source_data/} \\
+\bottomrule
+\end{tabularx}
+\endgroup
+\end{table}
+
+\clearpage
+\appendix
+\section{Supplementary Tables}
+\input{ds005620_sub1010_condition_comparisons.tex}
+\input{ds005620_all_subjects_awake_vs_sedation_epoch5.tex}
+\input{ds005620_all_subjects_awake_vs_sedation_epoch10.tex}
+\input{sedation_fourway_pairwise.tex}
+
+\end{document}
