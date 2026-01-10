@@ -15,6 +15,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
+import pandas as pd
 from scipy import linalg, stats
 
 # Add src to path for imports if package not installed
@@ -772,6 +773,31 @@ def main() -> None:
         print("Running Gaussianity analysis only...")
         all_gauss_results, all_epochs = run_gaussianity_analysis(test_files, n_channels=args.n_channels)
         print_gaussianity_summary(all_gauss_results)
+        dataset_label = Path(args.dataset).name
+        subject_slug = args.subject.replace("-", "")
+        gauss_rows = []
+        for cond_name, res in all_gauss_results.items():
+            overall = res.get("overall", {})
+            summary = res.get("summary", {})
+            gauss_rows.append(
+                {
+                    "condition": cond_name,
+                    "n_samples": overall.get("n_samples"),
+                    "shapiro_p": overall.get("shapiro_p"),
+                    "dagostino_p": overall.get("dagostino_p"),
+                    "jarque_bera_p": overall.get("jarque_bera_p"),
+                    "skewness": overall.get("skewness"),
+                    "kurtosis_excess": overall.get("kurtosis"),
+                    "avg_skewness": summary.get("avg_skewness"),
+                    "avg_kurtosis_excess": summary.get("avg_kurtosis"),
+                    "pct_channels_normal_shapiro": summary.get("pct_channels_normal_shapiro"),
+                    "pct_channels_normal_jb": summary.get("pct_channels_normal_jb"),
+                }
+            )
+        gauss_df = pd.DataFrame(gauss_rows)
+        out_csv = output_dir / f"{dataset_label}_{subject_slug}_gaussianity_summary.csv"
+        gauss_df.to_csv(out_csv, index=False)
+        print(f"Saved Gaussianity summary CSV: {out_csv}")
         plot_gaussianity_comparison(all_gauss_results, all_epochs,
                                     save_path=str(output_dir / "gaussianity_comparison.png"))
     else:
@@ -789,6 +815,35 @@ def main() -> None:
 
         # Print multi-condition summary
         print_multi_summary(all_results)
+
+        dataset_label = Path(args.dataset).name
+        subject_slug = args.subject.replace("-", "")
+        sweep_rows = []
+        for cond_name, (results, gaussian_baseline) in all_results.items():
+            for r in results:
+                pct = (
+                    (r["mean_mib"] / gaussian_baseline["mean_mib"] * 100.0)
+                    if gaussian_baseline and gaussian_baseline.get("mean_mib")
+                    else np.nan
+                )
+                sweep_rows.append(
+                    {
+                        "condition": cond_name,
+                        "n_bins": r.get("n_bins"),
+                        "n_epochs": r.get("n_epochs"),
+                        "mean_mib": r.get("mean_mib"),
+                        "std_mib": r.get("std_mib"),
+                        "cv_mib": r.get("cv_mib"),
+                        "gaussian_mean_mib": gaussian_baseline.get("mean_mib") if gaussian_baseline else np.nan,
+                        "gaussian_std_mib": gaussian_baseline.get("std_mib") if gaussian_baseline else np.nan,
+                        "gaussian_cv_mib": gaussian_baseline.get("cv_mib") if gaussian_baseline else np.nan,
+                        "pct_of_gaussian_mean": pct,
+                    }
+                )
+        sweep_df = pd.DataFrame(sweep_rows)
+        out_csv = output_dir / f"{dataset_label}_{subject_slug}_bin_count_sweep.csv"
+        sweep_df.to_csv(out_csv, index=False)
+        print(f"Saved bin-count sweep CSV: {out_csv}")
 
         # Save multi-condition plot
         plot_multi_condition_results(all_results, save_path=str(output_dir / "bin_count_effect_multi.png"))

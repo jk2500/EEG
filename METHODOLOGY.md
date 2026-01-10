@@ -1,7 +1,7 @@
 # Methodology: Random-Channel MIB EEG Analysis
 
 ## Overview
-This project estimates Minimum Information Bipartition (MIB) values from EEG recordings using repeated random channel subsets. The primary workflow is implemented in `scripts/random_channels_mib.py` and uses a binning-based mutual information estimator. Results are generated for broadband data and/or for predefined spectral bands.
+This project estimates Minimum Information Bipartition (MIB) values from EEG recordings using repeated random channel subsets. The primary workflow is implemented in `scripts/mib_analysis.py` (with an end-to-end paper regeneration pipeline in `run_optimal_analysis.sh`) and uses a binning-based mutual information estimator. Results are generated for broadband data and/or for predefined spectral bands.
 
 ## Theoretical background (methodology)
 The pipeline is grounded in information-theoretic measures of integration. For a multichannel system, mutual information between two channel subsets captures how much the activity of one subset reduces uncertainty about the other. The Minimum Information Bipartition (MIB) is defined as the smallest mutual information across all non-trivial bipartitions, providing a lower bound on how integrated the system is across all possible splits.
@@ -139,13 +139,13 @@ Across all repeats, the following summary statistics are computed:
 
 ## Output structure and downstream summaries
 Results are saved as JSON files, including metadata and per-repeat payloads:
-- Broadband: `mib_random_channels_broadband_binning_<timestamp>.json`
-- Spectral: `mib_random_channels_spectral_binning_<timestamp>.json`
+- Broadband: `mib_broadband_<timestamp>.json`
+- Spectral: `mib_spectral_<timestamp>.json`
 
 For dataset sweeps, results are organized as:
 
 ```
-results/ds005620/mib_random_channels/<mode>/binning/epoch-<len>s/<subject>/<condition>/
+<output>/<dataset>/<mode>/binning/<subject>/<condition>/
 ```
 
 The optional summary script `scripts/analyze_mib_results.py` computes:

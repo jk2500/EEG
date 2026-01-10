@@ -9,6 +9,7 @@ Usage:
     python analysis/scripts/plot_sedation_fourway.py --plot trajectories
     python analysis/scripts/plot_sedation_fourway.py --plot heatmap
     python analysis/scripts/plot_sedation_fourway.py --plot ranges
+    python analysis/scripts/plot_sedation_fourway.py --plot alpha_threeway
 """
 
 import argparse
@@ -29,21 +30,26 @@ def load_band_means(root: Path) -> pd.DataFrame:
     for subject_dir in sorted(root.glob("sub-*")):
         subject = subject_dir.name
         for condition in SEDATION_CONDITIONS:
-            for path in subject_dir.glob(f"{condition}/sedation_mib_spectral_*.json"):
-                data = json.loads(path.read_text())
-                for band in BANDS:
-                    if band not in data["bands"]:
-                        continue
-                    mean_val = data["bands"][band]["overall_stats"]["mean_of_per_repeat_means"]
-                    rows.append(
-                        {
-                            "subject": subject,
-                            "condition": condition,
-                            "band": band,
-                            "mean": mean_val,
-                            "source_file": str(path),
-                        }
-                    )
+            patterns = [
+                f"{condition}/sedation_mib_spectral_*.json",  # legacy
+                f"{condition}/mib_spectral_*.json",          # scripts/mib_analysis.py
+            ]
+            for pattern in patterns:
+                for path in subject_dir.glob(pattern):
+                    data = json.loads(path.read_text())
+                    for band in BANDS:
+                        if band not in data["bands"]:
+                            continue
+                        mean_val = data["bands"][band]["overall_stats"]["mean_of_per_repeat_means"]
+                        rows.append(
+                            {
+                                "subject": subject,
+                                "condition": condition,
+                                "band": band,
+                                "mean": mean_val,
+                                "source_file": str(path),
+                            }
+                        )
     return pd.DataFrame(rows)
 
 
@@ -208,6 +214,65 @@ def plot_ranges(df: pd.DataFrame, out_dir: Path) -> None:
     print(f"Saved: {out_dir / 'fourway_band_mean_range.png'}")
 
 
+def plot_alpha_threeway(df: pd.DataFrame, out_dir: Path) -> None:
+    """Plot baseline/light/deep trajectories for alpha band (paper figure)."""
+    conds = ["baseline", "light_sedation", "deep_sedation"]
+    alpha_df = df[df["band"] == "alpha"]
+    wide = alpha_df.pivot_table(index="subject", columns="condition", values="mean")
+    paired = wide.dropna(subset=conds)
+    if paired.empty:
+        raise SystemExit("No complete alpha-band data for baseline/light/deep.")
+
+    x = np.arange(len(conds))
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+
+    for _, row in paired[conds].iterrows():
+        y = row.to_numpy()
+        ax.plot(x, y, color="#999999", linewidth=1, alpha=0.6)
+        ax.scatter(x, y, color="#777777", s=18, alpha=0.7)
+
+    means = [paired[c].mean() for c in conds]
+    ci_lows = [mean_ci(paired[c].to_numpy())[0] for c in conds]
+    ci_highs = [mean_ci(paired[c].to_numpy())[1] for c in conds]
+    yerr = [
+        [m - l for m, l in zip(means, ci_lows)],
+        [h - m for h, m in zip(ci_highs, means)],
+    ]
+    ax.errorbar(x, means, yerr=yerr, fmt="o", color="#000000", capsize=4)
+
+    p_bl = ttest_rel(paired["baseline"], paired["light_sedation"]).pvalue
+    p_ld = ttest_rel(paired["light_sedation"], paired["deep_sedation"]).pvalue
+    p_bd = ttest_rel(paired["baseline"], paired["deep_sedation"]).pvalue
+
+    ax.set_title(f"Alpha-band MIB trajectories (n={paired.shape[0]})")
+    ax.set_xticks(x)
+    ax.set_xticklabels(conds, rotation=20, ha="right")
+    ax.set_ylabel("Alpha-band MIB (bits)")
+    ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+    text = (
+        "Paired t-tests\n"
+        f"baseline vs light: p={p_bl:.3g}\n"
+        f"light vs deep: p={p_ld:.3g}\n"
+        f"baseline vs deep: p={p_bd:.3g}"
+    )
+    ax.text(
+        0.98,
+        0.02,
+        text,
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=9,
+        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85, "edgecolor": "0.8"},
+    )
+
+    fig.tight_layout()
+    fig.savefig(out_dir / "alpha_threeway_comparison.png", dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_dir / 'alpha_threeway_comparison.png'}")
+
+
 def run_analysis(root: Path, out_dir: Path, plot_types: list[str]) -> None:
     """Run the full analysis pipeline."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -234,6 +299,9 @@ def run_analysis(root: Path, out_dir: Path, plot_types: list[str]) -> None:
     if "ranges" in plot_types or "all" in plot_types:
         plot_ranges(df, out_dir)
 
+    if "alpha_threeway" in plot_types or "all" in plot_types:
+        plot_alpha_threeway(df, out_dir)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -255,7 +323,7 @@ def main() -> None:
         "--plot",
         type=str,
         nargs="+",
-        choices=["trajectories", "heatmap", "ranges", "all"],
+        choices=["trajectories", "heatmap", "ranges", "alpha_threeway", "all"],
         default=["all"],
         help="Which plots to generate (default: all)",
     )

@@ -1,7 +1,7 @@
-# Sub-1010 Results EDA (mib_random_channels/spectral/binning)
+# Sub-1010 Results EDA (mib_analysis_optimal spectral binning)
 
 ## Scope and inputs
-- Source: results/ds005620/mib_random_channels/spectral/binning/epoch-5p00s/sub-1010
+- Source: results/ds005620/mib_analysis_optimal/ds005620/spectral/binning/sub-1010
 - Conditions: awake_eyes_closed, awake_eyes_open, sedation_1
 - Bands: delta, theta, alpha, beta, gamma, broadband
 - Each band: 50 repeats, 16 channels selected from 62 (random), 5 s epochs

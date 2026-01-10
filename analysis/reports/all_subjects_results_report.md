@@ -1,7 +1,7 @@
-# All-Subjects Results EDA (mib_random_channels spectral binning)
+# All-Subjects Results EDA (mib_analysis_optimal spectral binning)
 
 ## Scope
-- Source: results/ds005620/mib_random_channels/spectral/binning/epoch-5p00s/sub-*/
+- Source: results/ds005620/mib_analysis_optimal/ds005620/spectral/binning/sub-*/
 - Conditions: awake_eyes_closed, awake_eyes_open, sedation_1
 - Subjects: 21 total; 20 with sedation_1 + both awake conditions
 - Bands: delta, theta, alpha, beta, gamma, broadband

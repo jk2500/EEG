@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Detailed EDA for subject MIB results.
 
-Supports different subjects and epoch lengths via CLI arguments.
+Supports different subjects, epoch lengths, and configurable results roots.
 
 Usage:
-    python analysis/scripts/eda_sub1010_results.py                    # Default: sub-1010, 5s
-    python analysis/scripts/eda_sub1010_results.py --subject sub-1010 --epoch 10
-    python analysis/scripts/eda_sub1010_results.py --subject sub-1019 --epoch 5
+    # Default: sub-1010, 5s, default results root
+    python analysis/scripts/eda_sub1010_results.py
+
+    # Alternate results root / epoch
+    python analysis/scripts/eda_sub1010_results.py --subject sub-1010 --epoch 10 --root path/to/results_root
 """
 
 import argparse
@@ -20,7 +22,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import mannwhitneyu, ttest_ind
 
-from utils import mean_ci, cohen_d, fdr_bh, jaccard_mean, format_epoch_path
+from utils import mean_ci, cohen_d, fdr_bh, jaccard_mean
 
 
 def load_json(path: Path) -> dict:
@@ -28,20 +30,52 @@ def load_json(path: Path) -> dict:
         return json.load(handle)
 
 
-def run_eda(subject: str, epoch_length: float) -> None:
-    """Run detailed EDA for the specified subject and epoch length."""
-    epoch_str = format_epoch_path(epoch_length)
+def _subject_slug(subject: str) -> str:
+    return subject.replace("-", "")
 
-    results_dir = Path(
-        f"results/ds005620/mib_random_channels/spectral/binning/epoch-{epoch_str}/{subject}"
-    )
-    out_dir = Path(f"analysis/outputs/ds005620/{subject}_results_epoch{int(epoch_length)}")
+
+def _default_results_root(epoch_length: float) -> Path:
+    """
+    Pick a sensible default root for ds005620 spectral results.
+
+    Defaults to the output layout used by scripts/mib_analysis.py:
+        results/ds005620/mib_analysis_optimal[/epoch10]/ds005620/spectral/binning/
+    """
+    base = Path("results/ds005620/mib_analysis_optimal")
+    if int(epoch_length) == 10:
+        base = Path("results/ds005620/mib_analysis_optimal_epoch10")
+    return base / "ds005620" / "spectral" / "binning"
+
+
+def _default_output_dir(subject: str) -> Path:
+    """
+    Match the folder referenced by paper/paper.tex for the sub-1010 case study.
+    """
+    slug = _subject_slug(subject)
+    if slug == "sub1010":
+        return Path("analysis/outputs/ds005620/sub1010_results")
+    return Path(f"analysis/outputs/ds005620/{slug}_results")
+
+
+def run_eda(*, subject: str, epoch_length: float, root: Path, out_dir: Path) -> None:
+    """Run detailed EDA for the specified subject and epoch length."""
+    results_dir = root / subject
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    json_paths = sorted(results_dir.glob("*/mib_random_channels_spectral_binning_*.json"))
+    all_json_paths = sorted(results_dir.glob("*/*.json"))
+    # If multiple runs exist per condition, keep only the most recent file per condition.
+    newest_by_condition: dict[str, Path] = {}
+    for path in all_json_paths:
+        condition = path.parent.name
+        prev = newest_by_condition.get(condition)
+        if prev is None or path.stat().st_mtime > prev.stat().st_mtime:
+            newest_by_condition[condition] = path
+    json_paths = [newest_by_condition[c] for c in sorted(newest_by_condition)]
     if not json_paths:
         raise SystemExit(f"No results found in {results_dir}")
+
+    subject_slug = _subject_slug(subject)
 
     summary_rows = []
     repeat_rows = []
@@ -174,22 +208,22 @@ def run_eda(subject: str, epoch_length: float) -> None:
             )
 
     summary_df = pd.DataFrame(summary_rows)
-    summary_df.to_csv(out_dir / "results_summary.csv", index=False)
+    summary_df.to_csv(out_dir / f"{subject_slug}_results_summary.csv", index=False)
 
     repeat_df = pd.DataFrame(repeat_rows)
-    repeat_df.to_csv(out_dir / "repeat_means.csv", index=False)
+    repeat_df.to_csv(out_dir / f"{subject_slug}_repeat_means.csv", index=False)
 
     epoch_df = pd.DataFrame(epoch_rows)
-    epoch_df.to_csv(out_dir / "epoch_distribution.csv", index=False)
+    epoch_df.to_csv(out_dir / f"{subject_slug}_epoch_distribution.csv", index=False)
 
     stability_df = pd.DataFrame(stability_rows)
-    stability_df.to_csv(out_dir / "epoch_stability.csv", index=False)
+    stability_df.to_csv(out_dir / f"{subject_slug}_epoch_stability.csv", index=False)
 
     selection_df = pd.DataFrame(selection_rows)
-    selection_df.to_csv(out_dir / "channel_selection_counts.csv", index=False)
+    selection_df.to_csv(out_dir / f"{subject_slug}_channel_selection_counts.csv", index=False)
 
     jaccard_df = pd.DataFrame(jaccard_rows)
-    jaccard_df.to_csv(out_dir / "selection_jaccard.csv", index=False)
+    jaccard_df.to_csv(out_dir / f"{subject_slug}_selection_jaccard.csv", index=False)
 
     comparisons = []
     for band in sorted(summary_df["band"].unique()):
@@ -220,7 +254,7 @@ def run_eda(subject: str, epoch_length: float) -> None:
     if not comp_df.empty:
         comp_df["t_pvalue_fdr"] = fdr_bh(comp_df["t_pvalue"].to_numpy())
         comp_df["mw_pvalue_fdr"] = fdr_bh(comp_df["mw_pvalue"].to_numpy())
-        comp_df.to_csv(out_dir / "condition_comparisons.csv", index=False)
+        comp_df.to_csv(out_dir / f"{subject_slug}_condition_comparisons.csv", index=False)
 
     plt.style.use("seaborn-v0_8-whitegrid")
 
@@ -244,7 +278,7 @@ def run_eda(subject: str, epoch_length: float) -> None:
     for ax in axes[len(bands):]:
         ax.axis("off")
     plt.tight_layout()
-    plt.savefig(out_dir / "repeat_means_boxplot.png", dpi=150)
+    plt.savefig(out_dir / f"{subject_slug}_repeat_means_boxplot.png", dpi=150)
     plt.close()
 
     # Mean MIB across bands by condition.
@@ -265,7 +299,7 @@ def run_eda(subject: str, epoch_length: float) -> None:
     plt.ylabel("Mean MIB")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(out_dir / "band_means.png", dpi=150)
+    plt.savefig(out_dir / f"{subject_slug}_band_means.png", dpi=150)
     plt.close()
 
     # Variability of repeat means (CV).
@@ -284,7 +318,7 @@ def run_eda(subject: str, epoch_length: float) -> None:
     plt.ylabel("CV")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(out_dir / "repeat_mean_cv.png", dpi=150)
+    plt.savefig(out_dir / f"{subject_slug}_repeat_mean_cv.png", dpi=150)
     plt.close()
 
     # Epoch stability summary.
@@ -302,7 +336,7 @@ def run_eda(subject: str, epoch_length: float) -> None:
     plt.ylabel("CV")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(out_dir / "epoch_stability_cv.png", dpi=150)
+    plt.savefig(out_dir / f"{subject_slug}_epoch_stability_cv.png", dpi=150)
     plt.close()
 
     print(f"EDA complete for {subject} (epoch {int(epoch_length)}s). Results saved to {out_dir}")
@@ -324,8 +358,22 @@ def main() -> None:
         default=5.0,
         help="Epoch length in seconds (default: 5.0)",
     )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Root directory containing ds005620 spectral JSON results (default: inferred).",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output directory for CSVs/figures (default: inferred).",
+    )
     args = parser.parse_args()
-    run_eda(args.subject, args.epoch)
+    root = Path(args.root) if args.root else _default_results_root(args.epoch)
+    out_dir = Path(args.output) if args.output else _default_output_dir(args.subject)
+    run_eda(subject=args.subject, epoch_length=args.epoch, root=root, out_dir=out_dir)
 
 
 if __name__ == "__main__":

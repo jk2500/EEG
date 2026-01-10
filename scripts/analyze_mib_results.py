@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Analyze Random-Channel MIB Output JSONs
----------------------------------------
+Analyze MIB Output JSONs
+-----------------------
 
-Reads the JSON files produced by `random_channels_mib.py` and reports:
+Reads the JSON files produced by `scripts/mib_analysis.py` and reports:
 - Stability per condition (and band) via coefficient of variation (CV) of per-repeat means.
 - Within-subject ordering check: eyes-open > eyes-closed > sedation_1 (per band).
 - Cross-subject differences for two-subject sweeps when available.
 
 Example:
-    python scripts/analyze_mib_results.py --root results/ds005620/mib_random_channels --mode broadband --estimator ksg --cv-threshold 0.15 --delta-threshold 0.05
+    python scripts/analyze_mib_results.py --root results/ds005620 --mode spectral --cv-threshold 0.15 --delta-threshold 0.05
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ import math
 import pandas as pd
 
 
-def _infer_subject(vhdr_path: str) -> str:
-    """Extract a subject ID from the VHDR path (e.g., sub-1010)."""
-    match = re.search(r"(sub-[A-Za-z0-9]+)", vhdr_path)
+def _infer_subject(path_str: str) -> str:
+    """Extract a subject ID from a path string (e.g., sub-1010)."""
+    match = re.search(r"(sub-[A-Za-z0-9]+)", path_str)
     return match.group(1) if match else "unknown"
 
 
@@ -43,9 +43,18 @@ def _infer_condition(vhdr_path: str) -> str:
         return "sedation_1"
     return "unknown"
 
+def _infer_subject_condition_from_output_path(path: Path) -> tuple[str, str]:
+    """
+    Infer (subject, condition) from the standard output layout:
+        .../<subject>/<condition>/mib_{mode}_YYYYMMDD_HHMMSS.json
+    """
+    if path.parent is None or path.parent.parent is None:
+        return "unknown", "unknown"
+    return path.parent.parent.name, path.parent.name
+
 
 def _load_jsons(root: Path, mode: str) -> List[Path]:
-    pattern = f"**/mib_random_channels_{mode}_*.json"
+    pattern = f"**/mib_{mode}_*.json"
     return sorted(root.glob(pattern))
 
 
@@ -53,8 +62,11 @@ def _extract_broadband_records(path: Path) -> List[Dict[str, Any]]:
     with path.open() as f:
         payload = json.load(f)
 
-    subject = _infer_subject(payload.get("vhdr_path", ""))
-    condition = _infer_condition(payload.get("vhdr_path", ""))
+    subject, condition = _infer_subject_condition_from_output_path(path)
+    if subject == "unknown":
+        subject = _infer_subject(payload.get("file_path", ""))
+    if condition == "unknown":
+        condition = _infer_condition(payload.get("file_path", ""))
     overall = payload.get("overall_stats", {})
     repeats = payload.get("repeats", 0)
     return [
@@ -77,8 +89,11 @@ def _extract_spectral_records(path: Path) -> List[Dict[str, Any]]:
     with path.open() as f:
         payload = json.load(f)
 
-    subject = _infer_subject(payload.get("vhdr_path", ""))
-    condition = _infer_condition(payload.get("vhdr_path", ""))
+    subject, condition = _infer_subject_condition_from_output_path(path)
+    if subject == "unknown":
+        subject = _infer_subject(payload.get("file_path", ""))
+    if condition == "unknown":
+        condition = _infer_condition(payload.get("file_path", ""))
     epoch_length = float(payload.get("epoch_length", 0.0))
     estimator = payload.get("estimator", "unknown")
 
@@ -201,11 +216,11 @@ def _summarize(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Summarize random-channel MIB JSON outputs.")
+    parser = argparse.ArgumentParser(description="Summarize MIB JSON outputs produced by scripts/mib_analysis.py.")
     parser.add_argument(
         "--root",
         type=str,
-        default="results/ds005620/mib_random_channels",
+        default="results",
         help="Root directory containing JSON outputs.",
     )
     parser.add_argument("--mode", choices=["broadband", "spectral"], default="broadband", help="Which output mode to summarize.")

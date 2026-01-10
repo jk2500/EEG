@@ -41,6 +41,7 @@ def build_mib_analyzer(
     epoch_length: float,
     verbose: bool = False,
     n_jobs: Optional[int] = None,
+    n_bins: Optional[int] = None,
 ) -> ComplexityAnalyzer:
     """Create analyzer with BinningEstimator. Uses config defaults + overrides."""
     params: Dict[str, Any] = {
@@ -52,6 +53,8 @@ def build_mib_analyzer(
     }
     if n_jobs is not None:
         params["n_jobs"] = int(n_jobs)
+    if n_bins is not None:
+        params["n_bins"] = int(n_bins)
     estimator = BinningEstimator(**params)
     return ComplexityAnalyzer(estimator=estimator, **params)
 

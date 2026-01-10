@@ -61,6 +61,7 @@ def _load_ds005620_data(
     bands: Optional[List[str]],
     use_all_channels: bool,
     verbose: bool,
+    epoch_length: Optional[float] = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any], List[str], Dict[str, Any]]:
     """Load DS005620 BrainVision data."""
     from eeg_analysis.config import DS005620_DATASET_DIR, DS005620_COMMON_CHANNELS
@@ -70,7 +71,7 @@ def _load_ds005620_data(
         preprocess_ds005620_epochs_by_bands,
     )
 
-    epochs, meta = load_ds005620_epochs(str(file_path), verbose=verbose)
+    epochs, meta = load_ds005620_epochs(str(file_path), epoch_length=epoch_length, verbose=verbose)
     epoch_length = meta['epoch_duration']
 
     if bands:
@@ -99,6 +100,7 @@ def _load_sedation_data(
     bands: Optional[List[str]],
     use_all_channels: bool,
     verbose: bool,
+    epoch_length: Optional[float] = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any], List[str], Dict[str, Any]]:
     """Load Sedation-RestingState EEGLAB data."""
     from eeg_analysis.config import SEDATION_DATASET_DIR
@@ -109,7 +111,7 @@ def _load_sedation_data(
         SEDATION_COMMON_CHANNELS,
     )
 
-    epochs, meta = load_sedation_epochs(str(file_path), verbose=verbose)
+    epochs, meta = load_sedation_epochs(str(file_path), epoch_length=epoch_length, verbose=verbose)
     epoch_length = meta['epoch_duration']
 
     if bands:
@@ -155,6 +157,8 @@ def run_mib_spectral(
     output_dir: Path,
     verbose: bool,
     n_jobs: Optional[int],
+    epoch_length: Optional[float] = None,
+    n_bins: Optional[int] = None,
 ) -> Path:
     """Run spectral MIB analysis on a single file."""
     loader = DATASET_LOADERS[dataset]
@@ -165,10 +169,11 @@ def run_mib_spectral(
         bands=band_list,
         use_all_channels=True,
         verbose=verbose,
+        epoch_length=epoch_length,
     )
 
-    epoch_length = meta['epoch_duration']
-    analyzer = _build_analyzer(n_channels, epoch_length, verbose=False, n_jobs=n_jobs)
+    actual_epoch_length = meta['epoch_duration']
+    analyzer = _build_analyzer(n_channels, actual_epoch_length, verbose=False, n_jobs=n_jobs, n_bins=n_bins)
 
     if fixed_channels is None:
         fixed_channels = dataset_info["default_channels"]
@@ -210,7 +215,9 @@ def run_mib_spectral(
         "mode": "spectral",
         "dataset": dataset,
         "file_path": str(file_path),
-        "epoch_length": float(epoch_length),
+        "epoch_length": float(actual_epoch_length),
+        "n_bins": n_bins or 10,
+        "n_channels": n_channels,
         "estimator": "binning",
         "all_channel_names": channel_names,
         "selected_bands": band_list,
@@ -237,6 +244,8 @@ def run_mib_broadband(
     output_dir: Path,
     verbose: bool,
     n_jobs: Optional[int],
+    epoch_length: Optional[float] = None,
+    n_bins: Optional[int] = None,
 ) -> Path:
     """Run broadband MIB analysis on a single file."""
     loader = DATASET_LOADERS[dataset]
@@ -246,11 +255,12 @@ def run_mib_broadband(
         bands=None,
         use_all_channels=True,
         verbose=verbose,
+        epoch_length=epoch_length,
     )
 
     epochs_data = band_data["broadband"]
-    epoch_length = meta['epoch_duration']
-    analyzer = _build_analyzer(n_channels, epoch_length, verbose=False, n_jobs=n_jobs)
+    actual_epoch_length = meta['epoch_duration']
+    analyzer = _build_analyzer(n_channels, actual_epoch_length, verbose=False, n_jobs=n_jobs, n_bins=n_bins)
 
     if fixed_channels is None:
         fixed_channels = dataset_info["default_channels"]
@@ -282,7 +292,9 @@ def run_mib_broadband(
         "mode": "broadband",
         "dataset": dataset,
         "file_path": str(file_path),
-        "epoch_length": float(epoch_length),
+        "epoch_length": float(actual_epoch_length),
+        "n_bins": n_bins or 10,
+        "n_channels": n_channels,
         "estimator": "binning",
         "all_channel_names": channel_names,
         "original_sfreq": meta['sfreq'],
@@ -335,6 +347,8 @@ def run_dataset_sweep(
     included_conditions: Optional[Iterable[str]] = None,
     n_jobs: Optional[int] = None,
     bands: Optional[List[str]] = None,
+    epoch_length: Optional[float] = None,
+    n_bins: Optional[int] = None,
 ) -> List[Path]:
     """Run MIB analysis across a dataset."""
     generated_files: List[Path] = []
@@ -388,6 +402,8 @@ def run_dataset_sweep(
                         output_dir=condition_dir,
                         verbose=verbose,
                         n_jobs=n_jobs,
+                        epoch_length=epoch_length,
+                        n_bins=n_bins,
                     )
                 )
             else:  # spectral
@@ -403,6 +419,8 @@ def run_dataset_sweep(
                         output_dir=condition_dir,
                         verbose=verbose,
                         n_jobs=n_jobs,
+                        epoch_length=epoch_length,
+                        n_bins=n_bins,
                     )
                 )
 
@@ -449,6 +467,8 @@ Examples:
         sweep_parser.add_argument("--repeats", type=int, default=50, help="Number of random samples.")
         sweep_parser.add_argument("--rng-seed", type=int, default=42, help="Seed for reproducibility.")
         sweep_parser.add_argument("--fixed-channels", nargs="+", default=None, help="Fixed channel list for epoch stability.")
+        sweep_parser.add_argument("--epoch-length", type=float, default=None, help="Epoch length in seconds (default: dataset default).")
+        sweep_parser.add_argument("--n-bins", type=int, default=None, help="Number of bins for histogram discretization (default: 10).")
         sweep_parser.add_argument("--jobs", type=int, default=-1, help="Number of parallel jobs.")
         sweep_parser.add_argument("--output", type=str, default=None, help="Directory to save results.")
         sweep_parser.add_argument("--quiet", action="store_true", help="Suppress verbose logging.")
@@ -462,6 +482,8 @@ Examples:
         single_parser.add_argument("--repeats", type=int, default=50, help="Number of random samples.")
         single_parser.add_argument("--rng-seed", type=int, default=42, help="Seed for reproducibility.")
         single_parser.add_argument("--fixed-channels", nargs="+", default=None, help="Fixed channel list for epoch stability.")
+        single_parser.add_argument("--epoch-length", type=float, default=None, help="Epoch length in seconds (default: dataset default).")
+        single_parser.add_argument("--n-bins", type=int, default=None, help="Number of bins for histogram discretization (default: 10).")
         single_parser.add_argument("--jobs", type=int, default=-1, help="Number of parallel jobs.")
         single_parser.add_argument("--output", type=str, default=None, help="Directory to save results.")
         single_parser.add_argument("--quiet", action="store_true", help="Suppress verbose logging.")
@@ -508,6 +530,8 @@ def cli_main() -> None:
             included_conditions=args.conditions,
             n_jobs=args.jobs,
             bands=args.bands or list(SPECTRAL_BANDS.keys()),
+            epoch_length=args.epoch_length,
+            n_bins=args.n_bins,
         )
         return
 
@@ -529,6 +553,8 @@ def cli_main() -> None:
                 output_dir=output_dir,
                 verbose=not args.quiet,
                 n_jobs=args.jobs,
+                epoch_length=args.epoch_length,
+                n_bins=args.n_bins,
             )
         else:
             run_mib_spectral(
@@ -542,6 +568,8 @@ def cli_main() -> None:
                 output_dir=output_dir,
                 verbose=not args.quiet,
                 n_jobs=args.jobs,
+                epoch_length=args.epoch_length,
+                n_bins=args.n_bins,
             )
         return
 

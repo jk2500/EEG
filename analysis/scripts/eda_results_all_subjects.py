@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """EDA for all subjects MIB results.
 
-Supports different epoch lengths via CLI argument.
+Supports different epoch lengths and configurable results roots.
 
 Usage:
-    python analysis/scripts/eda_results_all_subjects.py          # Default 5s epochs
-    python analysis/scripts/eda_results_all_subjects.py --epoch 10
-    python analysis/scripts/eda_results_all_subjects.py --epoch 5
+    # Default: epoch=5s, default results root
+    python analysis/scripts/eda_results_all_subjects.py
+
+    # 10s sensitivity analysis (separate results root recommended)
+    python analysis/scripts/eda_results_all_subjects.py --epoch 10 --root path/to/results_root
 """
 
 import argparse
@@ -21,31 +23,105 @@ from utils import (
     COMPOSITE_BANDS,
     load_mib_results,
     aggregate_subject_results,
-    format_epoch_path,
 )
 
 
-def run_eda(epoch_length: float) -> None:
-    """Run EDA analysis for the specified epoch length."""
-    epoch_str = format_epoch_path(epoch_length)
-    epoch_label = f"{int(epoch_length)}s"
+def _default_results_root(epoch_length: float) -> Path:
+    """
+    Pick a sensible default root for ds005620 spectral results.
 
-    root = Path(f"results/ds005620/mib_random_channels/spectral/binning/epoch-{epoch_str}")
-    out_dir = Path(f"analysis/outputs/ds005620/all_subjects_results_epoch{int(epoch_length)}")
+    This defaults to the output layout used by scripts/mib_analysis.py:
+        results/ds005620/mib_analysis_optimal[/epochXX]/ds005620/spectral/binning/
+    """
+    base = Path("results/ds005620/mib_analysis_optimal")
+    if int(epoch_length) == 10:
+        base = Path("results/ds005620/mib_analysis_optimal_epoch10")
+    elif int(epoch_length) == 5:
+        base = Path("results/ds005620/mib_analysis_optimal")
+
+    return base / "ds005620" / "spectral" / "binning"
+
+
+def _default_output_dir(epoch_length: float) -> Path:
+    """
+    Match the folder names referenced by paper/paper.tex.
+    """
+    if int(epoch_length) == 5:
+        return Path("analysis/outputs/ds005620/all_subjects_results")
+    return Path(f"analysis/outputs/ds005620/all_subjects_results_epoch{int(epoch_length)}")
+
+
+def run_eda(*, epoch_length: float, root: Path, out_dir: Path) -> None:
+    """Run EDA analysis for the specified epoch length."""
+    epoch_label = f"{int(epoch_length)}s"
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
     df = load_mib_results(
         root,
-        glob_pattern="sub-*/*/mib_random_channels_spectral_binning_*.json",
+        glob_pattern="sub-*/*/mib_*.json",
     )
     if df.empty:
         raise SystemExit(f"No results found under {root}")
 
-    df.to_csv(out_dir / "band_means.csv", index=False)
+    # Restrict to subjects with all three primary conditions available.
+    required = ["awake_eyes_open", "awake_eyes_closed", "sedation_1"]
+    coverage = (
+        df[df["condition"].isin(required)]
+        .groupby(["subject", "condition"])["band"]
+        .nunique()
+        .unstack("condition")
+    )
+    keep_subjects = coverage.dropna(subset=required).index.tolist()
+    df = df[df["subject"].isin(keep_subjects)].copy()
+    # If multiple result files exist per subject/condition, keep only the most recent record.
+    df["mtime"] = df["source_file"].map(lambda p: Path(p).stat().st_mtime)
+    df = (
+        df.sort_values("mtime")
+        .drop_duplicates(subset=["subject", "condition", "band"], keep="last")
+        .drop(columns=["mtime"])
+    )
+
+    # Persist the long-form subject/condition/band means as source data.
+    long_name = "all_subjects_band_means_long.csv" if int(epoch_length) == 5 else f"epoch{int(epoch_length)}_band_means_long.csv"
+    df.to_csv(out_dir / long_name, index=False)
 
     wide = aggregate_subject_results(df, add_composites=True)
-    wide.to_csv(out_dir / "composites.csv", index=False)
+    composites_name = (
+        "all_subjects_composites.csv"
+        if int(epoch_length) == 5
+        else f"epoch{int(epoch_length)}_composites.csv"
+    )
+    wide.to_csv(out_dir / composites_name, index=False)
+
+    # Condition-level means by band (mean ± SD across subjects).
+    band_list = ["delta", "theta", "alpha", "beta", "gamma", "broadband"]
+    cond_means = (
+        df[df["band"].isin(band_list)]
+        .groupby(["band", "condition"])["mean"]
+        .agg(["mean", "std"])
+        .reset_index()
+    )
+    cond_means = cond_means[cond_means["condition"].isin(required)]
+    means_pivot = cond_means.pivot(index="band", columns="condition", values="mean")
+    std_pivot = cond_means.pivot(index="band", columns="condition", values="std")
+    band_means_table = pd.DataFrame(
+        {
+            "band": band_list,
+            "awake_eo_mean": means_pivot.reindex(band_list)["awake_eyes_open"].to_numpy(),
+            "awake_eo_std": std_pivot.reindex(band_list)["awake_eyes_open"].to_numpy(),
+            "awake_ec_mean": means_pivot.reindex(band_list)["awake_eyes_closed"].to_numpy(),
+            "awake_ec_std": std_pivot.reindex(band_list)["awake_eyes_closed"].to_numpy(),
+            "sedation_1_mean": means_pivot.reindex(band_list)["sedation_1"].to_numpy(),
+            "sedation_1_std": std_pivot.reindex(band_list)["sedation_1"].to_numpy(),
+        }
+    )
+    band_means_name = (
+        "all_subjects_band_means.csv"
+        if int(epoch_length) == 5
+        else f"epoch{int(epoch_length)}_band_means.csv"
+    )
+    band_means_table.to_csv(out_dir / band_means_name, index=False)
 
     metrics = list(df["band"].unique()) + list(COMPOSITE_BANDS.keys()) + ["high_over_low"]
     comparisons = []
@@ -75,9 +151,13 @@ def run_eda(epoch_length: float) -> None:
             comparisons.append({"metric": metric, "awake_label": label, **stats})
 
     comp_df = pd.DataFrame(comparisons)
-    comp_df.to_csv(out_dir / "awake_vs_sedation.csv", index=False)
+    awake_vs_sed_name = (
+        "all_subjects_awake_vs_sedation.csv"
+        if int(epoch_length) == 5
+        else f"epoch{int(epoch_length)}_awake_vs_sedation.csv"
+    )
+    comp_df.to_csv(out_dir / awake_vs_sed_name, index=False)
 
-    band_list = ["delta", "theta", "alpha", "beta", "gamma", "broadband"]
     comp_band = comp_df[
         (comp_df["metric"].isin(band_list)) & (comp_df["awake_label"] == "awake_avg")
     ].set_index("metric")
@@ -98,7 +178,12 @@ def run_eda(epoch_length: float) -> None:
     plt.ylabel("Awake_avg - Sedation (mean diff)")
     plt.title(f"Epoch {epoch_label}: Awake_avg vs Sedation by Band (95% CI)")
     plt.tight_layout()
-    plt.savefig(out_dir / "awake_avg_vs_sedation_by_band.png", dpi=150)
+    fig_name = (
+        "awake_avg_vs_sedation_by_band.png"
+        if int(epoch_length) == 5
+        else f"epoch{int(epoch_length)}_awake_avg_vs_sedation_by_band.png"
+    )
+    plt.savefig(out_dir / fig_name, dpi=150)
     plt.close()
 
     comp_cond = comp_df[comp_df["metric"].isin(band_list)]
@@ -115,7 +200,12 @@ def run_eda(epoch_length: float) -> None:
     plt.title(f"Epoch {epoch_label}: Awake vs Sedation by Band")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(out_dir / "awake_vs_sedation_by_band.png", dpi=150)
+    fig_name = (
+        "awake_vs_sedation_by_band.png"
+        if int(epoch_length) == 5
+        else f"epoch{int(epoch_length)}_awake_vs_sedation_by_band.png"
+    )
+    plt.savefig(out_dir / fig_name, dpi=150)
     plt.close()
 
     comp_metric = comp_df[
@@ -141,7 +231,12 @@ def run_eda(epoch_length: float) -> None:
     plt.ylabel("Awake_avg - Sedation (mean diff)")
     plt.title(f"Epoch {epoch_label}: Composite Metrics (Awake_avg vs Sedation)")
     plt.tight_layout()
-    plt.savefig(out_dir / "awake_avg_vs_sedation_composites.png", dpi=150)
+    fig_name = (
+        "awake_avg_vs_sedation_composites.png"
+        if int(epoch_length) == 5
+        else f"epoch{int(epoch_length)}_awake_avg_vs_sedation_composites.png"
+    )
+    plt.savefig(out_dir / fig_name, dpi=150)
     plt.close()
 
     print(f"EDA complete for epoch length {epoch_label}. Results saved to {out_dir}")
@@ -157,8 +252,22 @@ def main() -> None:
         default=5.0,
         help="Epoch length in seconds (default: 5.0)",
     )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Root directory containing ds005620 spectral JSON results (default: inferred).",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output directory for CSVs/figures (default: inferred).",
+    )
     args = parser.parse_args()
-    run_eda(args.epoch)
+    root = Path(args.root) if args.root else _default_results_root(args.epoch)
+    out_dir = Path(args.output) if args.output else _default_output_dir(args.epoch)
+    run_eda(epoch_length=args.epoch, root=root, out_dir=out_dir)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ classifiers = [
 
 dependencies = [
     "numpy",
+    "numba",
     "scipy",
     "pandas",
     "matplotlib",
@@ -59,7 +60,15 @@ dev = [
     "ruff",
 ]
 all = [
-    "eeg-analysis[viz,notebook,dev]",
+    "plotly",
+    "kaleido",
+    "jupyter",
+    "notebook",
+    "ipykernel",
+    "pytest>=7.0",
+    "pytest-cov",
+    "mypy",
+    "ruff",
 ]
 
 [project.scripts]

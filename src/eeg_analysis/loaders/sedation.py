@@ -162,23 +162,29 @@ def create_sedation_subject_file_map(
 
 def load_sedation_epochs(
     set_file: str,
+    epoch_length: float | None = None,
     verbose: bool = False,
 ) -> tuple[Epochs, dict[str, Any]]:
     """
     Load epoched EEG data from an EEGLAB .set file.
-    
+
+    Note: epoch_length is ignored - epochs are predefined in .set files.
+
     Parameters
     ----------
     set_file : str
         Path to the .set file.
+    epoch_length : float, optional
+        Ignored - included for API consistency with other loaders.
     verbose : bool
         Whether to print progress messages.
-        
+
     Returns
     -------
     Tuple[mne.Epochs, Dict[str, Any]]
         MNE Epochs object and metadata dictionary.
     """
+    # epoch_length is ignored - EEGLAB files have predefined epochs
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         epochs = mne.io.read_epochs_eeglab(set_file, verbose=False)

@@ -41,6 +41,11 @@ eeg_consciousness/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Test / typecheck / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # Data files - Note: ds005620 is a datalad dataset (git submodule)
 # Large EEG binary files are handled by datalad, not stored directly in git
 # *.eeg  # Commented out - datalad handles these
@@ -50,6 +55,8 @@ eeg_consciousness/
 *.set
 
 # Temporary files
+.numba_cache/
+.tmp/
 *.tmp
 *.temp
 .DS_Store
@@ -57,6 +64,14 @@ Thumbs.db
 
 # Logs
 *.log
+
+# LaTeX build artifacts
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
 
 # Results (optional - comment out if you want to track results)
 results/

@@ -27,3 +27,5 @@ kaleido
 jupyter
 notebook
 ipykernel
+
+numba
